@@ -4,7 +4,7 @@ require('dotenv').config({
 });
 const express = require('express');
 const multer = require('multer');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 
 const {
   R2_ACCOUNT_ID,
@@ -12,8 +12,8 @@ const {
   R2_SECRET_ACCESS_KEY,
   R2_BUCKET_NAME,
   R2_PUBLIC_BASE_URL,
-  R2_UPLOAD_PREFIX = 'exercises',
-  PORT = 3000,
+  R2_UPLOAD_PREFIX = 'exercices',
+  PORT = 10000,
 } = process.env;
 
 if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET_NAME) {
@@ -52,16 +52,24 @@ function buildObjectKey(subject, title, originalName) {
   return `${R2_UPLOAD_PREFIX}/${safeSubject}/${timestamp}-${safeTitle}-${safeName}`;
 }
 
-function buildPublicUrl(objectKey) {
-  if (R2_PUBLIC_BASE_URL && R2_PUBLIC_BASE_URL.trim().length > 0) {
-    const base = R2_PUBLIC_BASE_URL.trim().replace(/\/+$/g, '');
-    const key = objectKey.replace(/^\/+/, '');
-    return `${base}/${key}`;
+function buildPublicUrl(req, objectKey) {
+  const cleanedKey = objectKey.replace(/^\/+/, '');
+  if (R2_PUBLIC_BASE_URL && R2_PUBLIC_BASE_URL.trim()) {
+    const base = R2_PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
+    const encodedKey = cleanedKey
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    return `${base}/${encodedKey}`;
   }
 
-  const bucketUrl = `${r2Endpoint}/${R2_BUCKET_NAME}`;
-  const key = objectKey.replace(/^\/+/, '');
-  return `${bucketUrl}/${key}`;
+  const protocol = req.get('x-forwarded-proto') || req.protocol;
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const encodedKey = cleanedKey
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `${protocol}://${host}/files/${encodedKey}`;
 }
 
 app.post('/upload', upload.single('file'), async (req, res) => {
@@ -72,18 +80,22 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     const subject = req.body.subject || 'عام';
     const title = req.body.title || path.parse(req.file.originalname).name;
-    const objectKey = buildObjectKey(subject, title, req.file.originalname);
+    const requestedObjectKey = (req.body.objectKey || '').toString().trim();
+    const objectKey = requestedObjectKey
+      ? requestedObjectKey.replace(/^\/+/, '')
+      : buildObjectKey(subject, title, req.file.originalname);
 
     const command = new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: objectKey,
       Body: req.file.buffer,
       ContentType: req.file.mimetype || 'application/octet-stream',
+      ACL: 'public-read',
     });
 
     await s3Client.send(command);
 
-    const publicUrl = buildPublicUrl(objectKey);
+    const publicUrl = buildPublicUrl(req, objectKey);
     return res.status(201).json({
       url: publicUrl,
       objectKey,
@@ -92,6 +104,107 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     console.error('Upload failed:', error);
     return res.status(500).json({
       error: 'Failed to upload file to Cloudflare R2.',
+      details: error.message || String(error),
+    });
+  }
+});
+
+app.get('/files', (req, res) => {
+  return res.status(200).json({
+    message: 'File endpoint is ready. Provide an object key after /files/.',
+  });
+});
+
+function getObjectKeyFromRequest(req) {
+  const fromNamedParam = req.params.objectKey || '';
+  const fromWildcardParam = req.params[0] || '';
+  const rawValue = fromNamedParam || fromWildcardParam;
+  return decodeURIComponent(rawValue).replace(/^\/+/, '');
+}
+
+app.get('/files/:objectKey(*)', async (req, res) => {
+  try {
+    const objectKey = getObjectKeyFromRequest(req);
+    if (!objectKey) {
+      return res.status(400).json({ error: 'Missing object key.' });
+    }
+
+    const command = new GetObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: objectKey,
+    });
+
+    const response = await s3Client.send(command);
+    if (!response.Body) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', response.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${path.basename(objectKey)}"`,
+    );
+
+    if (typeof response.Body.transformToByteArray === 'function') {
+      const bytes = await response.Body.transformToByteArray();
+      return res.end(Buffer.from(bytes));
+    }
+
+    if (typeof response.Body.pipe === 'function') {
+      return response.Body.pipe(res);
+    }
+
+    return res.end(response.Body);
+  } catch (error) {
+    console.error('File fetch failed:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch file from Cloudflare R2.',
+      details: error.message || String(error),
+    });
+  }
+});
+
+app.get('/files/*', async (req, res) => {
+  try {
+    const objectKey = getObjectKeyFromRequest(req);
+    if (!objectKey) {
+      return res.status(400).json({ error: 'Missing object key.' });
+    }
+
+    const command = new GetObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: objectKey,
+    });
+
+    const response = await s3Client.send(command);
+    if (!response.Body) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', response.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${path.basename(objectKey)}"`,
+    );
+
+    if (typeof response.Body.transformToByteArray === 'function') {
+      const bytes = await response.Body.transformToByteArray();
+      return res.end(Buffer.from(bytes));
+    }
+
+    if (typeof response.Body.pipe === 'function') {
+      return response.Body.pipe(res);
+    }
+
+    return res.end(response.Body);
+  } catch (error) {
+    console.error('File fetch failed:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch file from Cloudflare R2.',
       details: error.message || String(error),
     });
   }
