@@ -4,7 +4,13 @@ require('dotenv').config({
 });
 const express = require('express');
 const multer = require('multer');
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+} = require('@aws-sdk/client-s3');
 
 const {
   R2_ACCOUNT_ID,
@@ -122,6 +128,62 @@ function getObjectKeyFromRequest(req) {
   return decodeURIComponent(rawValue).replace(/^\/+/, '');
 }
 
+async function resolveExistingObjectKey(requestedKey) {
+  const exactKey = requestedKey.replace(/^\/+/, '');
+  if (!exactKey) {
+    return null;
+  }
+
+  try {
+    await s3Client.send(
+      new HeadObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: exactKey,
+      }),
+    );
+    return exactKey;
+  } catch (error) {
+    if (!error || error.$metadata?.httpStatusCode !== 404) {
+      if (error?.name !== 'NoSuchKey' && error?.name !== 'NotFound') {
+        throw error;
+      }
+    }
+  }
+
+  const basename = path.basename(exactKey);
+  const listResponse = await s3Client.send(
+    new ListObjectsV2Command({
+      Bucket: R2_BUCKET_NAME,
+      Prefix: `${R2_UPLOAD_PREFIX}/`,
+    }),
+  );
+
+  const matches = (listResponse.Contents || [])
+    .map((item) => item.Key)
+    .filter(Boolean)
+    .filter((key) => path.basename(key) === basename);
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  if (matches.length === 1) {
+    return matches[0];
+  }
+
+  const latestMatch = matches
+    .map((key) => {
+      const entry = (listResponse.Contents || []).find((item) => item.Key === key);
+      return {
+        key,
+        lastModified: entry?.LastModified ? new Date(entry.LastModified).getTime() : 0,
+      };
+    })
+    .sort((a, b) => b.lastModified - a.lastModified)[0];
+
+  return latestMatch?.key || null;
+}
+
 app.get('/files/:objectKey(*)', async (req, res) => {
   try {
     const objectKey = getObjectKeyFromRequest(req);
@@ -129,9 +191,17 @@ app.get('/files/:objectKey(*)', async (req, res) => {
       return res.status(400).json({ error: 'Missing object key.' });
     }
 
+    const resolvedKey = await resolveExistingObjectKey(objectKey);
+    if (!resolvedKey) {
+      return res.status(404).json({
+        error: 'File not found.',
+        details: 'The specified key does not exist.',
+      });
+    }
+
     const command = new GetObjectCommand({
       Bucket: R2_BUCKET_NAME,
-      Key: objectKey,
+      Key: resolvedKey,
     });
 
     const response = await s3Client.send(command);
@@ -144,7 +214,7 @@ app.get('/files/:objectKey(*)', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=31536000');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${path.basename(objectKey)}"`,
+      `inline; filename="${path.basename(resolvedKey)}"`,
     );
 
     if (typeof response.Body.transformToByteArray === 'function') {
@@ -173,9 +243,17 @@ app.get('/files/*', async (req, res) => {
       return res.status(400).json({ error: 'Missing object key.' });
     }
 
+    const resolvedKey = await resolveExistingObjectKey(objectKey);
+    if (!resolvedKey) {
+      return res.status(404).json({
+        error: 'File not found.',
+        details: 'The specified key does not exist.',
+      });
+    }
+
     const command = new GetObjectCommand({
       Bucket: R2_BUCKET_NAME,
-      Key: objectKey,
+      Key: resolvedKey,
     });
 
     const response = await s3Client.send(command);
@@ -188,7 +266,7 @@ app.get('/files/*', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=31536000');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${path.basename(objectKey)}"`,
+      `inline; filename="${path.basename(resolvedKey)}"`,
     );
 
     if (typeof response.Body.transformToByteArray === 'function') {
