@@ -10,6 +10,7 @@ const {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  DeleteObjectCommand,
 } = require('@aws-sdk/client-s3');
 
 const {
@@ -77,6 +78,29 @@ function buildPublicUrl(req, objectKey) {
     .join('/');
   return `${protocol}://${host}/files/${encodedKey}`;
 }
+
+app.post('/delete', express.json(), async (req, res) => {
+  try {
+    const objectKey = (req.body.objectKey || '').toString().trim();
+    if (!objectKey) {
+      return res.status(400).json({ error: 'Missing object key.' });
+    }
+
+    const command = new DeleteObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: objectKey.replace(/^\/+/, ''),
+    });
+
+    await s3Client.send(command);
+    return res.status(200).json({ success: true, objectKey });
+  } catch (error) {
+    console.error('Delete failed:', error);
+    return res.status(500).json({
+      error: 'Failed to delete file from Cloudflare R2.',
+      details: error.message || String(error),
+    });
+  }
+});
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
