@@ -31,6 +31,8 @@ if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET_N
 const upload = multer({ storage: multer.memoryStorage() });
 const app = express();
 
+app.use('/.well-known', express.static(path.join(__dirname, '.well-known')));
+
 const r2Endpoint = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const s3Client = new S3Client({
   region: 'auto',
