@@ -147,6 +147,38 @@ app.get('/files', (req, res) => {
   });
 });
 
+app.get('/open/files/:objectKey(*)', async (req, res) => {
+  try {
+    const objectKey = getObjectKeyFromRequest(req);
+    if (!objectKey) {
+      return res.status(400).json({ error: 'Missing object key.' });
+    }
+
+    const resolvedKey = await resolveExistingObjectKey(objectKey);
+    if (!resolvedKey) {
+      return res.status(404).json({
+        error: 'File not found.',
+        details: 'The specified key does not exist.',
+      });
+    }
+
+    const encodedKey = resolvedKey
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+
+    // Redirect to the file-serving endpoint. This avoids returning the file
+    // directly so Android App Links can be triggered for the /open/files/ path.
+    return res.redirect(302, `/files/${encodedKey}`);
+  } catch (error) {
+    console.error('Open file redirect failed:', error);
+    return res.status(500).json({
+      error: 'Failed to redirect to file.',
+      details: error.message || String(error),
+    });
+  }
+});
+
 function getObjectKeyFromRequest(req) {
   const fromNamedParam = req.params.objectKey || '';
   const fromWildcardParam = req.params[0] || '';
