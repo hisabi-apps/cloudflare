@@ -147,7 +147,7 @@ app.get('/files', (req, res) => {
   });
 });
 
-app.get('/open/files/:objectKey(*)', async (req, res) => {
+app.get('/files/:objectKey(*)', async (req, res) => {
   try {
     const objectKey = getObjectKeyFromRequest(req);
     if (!objectKey) {
