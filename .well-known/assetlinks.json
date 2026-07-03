@@ -5,4 +5,13 @@
       "namespace": "android_app",
       "package_name": "com.hisabi.univpro",
       "sha256_cert_fingerprints": [
-        "8B550F363EA10E37A9A55C2986BFBA7C6654 46F3BDBB5533AA732D122BA16CB3"
+         "8B550F363EA10E37A9A55C2986BFBA7C6654 46F3BDBB5533AA732D122BA16CB3",
+          "8A:9C:96:1E:6A:11:CD:1D:2B:5C:52:81:5B:E7:D8:01:EE:3B:F5:7B:16:3C:A8:AB:1A:FC:E9:B9:35:E3:B0:9D",
+        "BF:91:D9:39:53:0D:86:03:7E:4D:01:A0:F7:87:E4:C0:E1:9F:EC:22:BB:F4:64:BF:91:9F:50:89:E5:7D:D8:A1",
+        "0F:48:74:E3:AB:F6:9A:EC:3A:6E:AC:E6:1D:0E:9A:E1:00:05:3C:03:6F:E5:5B:6F:E5:02:38:14:B1:D7:19:05"
+       
+      ]
+    }
+  }
+]
+       
