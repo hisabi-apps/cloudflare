@@ -103,7 +103,7 @@ app.get('/exercise', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>فتح التمرين</title>
+    <title>متابعة</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; overflow: hidden; }
@@ -113,38 +113,34 @@ app.get('/exercise', (req, res) => {
             justify-content: center;
             align-items: center;
             height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%);
         }
         .container {
-            text-align: center;
-            background: white;
-            padding: 32px 24px;
-            border-radius: 14px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-            max-width: 360px;
-            width: 90%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
         }
-        h1 { color: #333; font-size: 22px; margin-bottom: 12px; }
-        p { color: #666; font-size: 14px; line-height: 1.7; margin-bottom: 18px; }
         .button {
             display: inline-block;
-            background-color: #667eea;
+            background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #3b82f6 100%);
             color: white;
             border: none;
-            padding: 12px 24px;
-            font-size: 16px;
-            border-radius: 8px;
+            padding: 16px 36px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 999px;
             cursor: pointer;
             text-decoration: none;
+            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.35);
         }
-        .button:hover { background-color: #5a6fd8; }
+        .button:hover { transform: translateY(-1px); }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>فتح التمرين</h1>
-        <p>إذا كان التطبيق مثبتًا، فسيتم فتحه مباشرة. وإذا لم يكن مثبتًا، اضغط على الزر أدناه.</p>
-        <a class="button" href="${googlePlayUrl}" target="_blank">فتح التطبيق على Google Play</a>
+        <a class="button" href="${googlePlayUrl}" target="_blank">متابعة</a>
     </div>
 
     <script>
