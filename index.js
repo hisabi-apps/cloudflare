@@ -101,46 +101,171 @@ app.get('/exercise', (req, res) => {
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>متابعة</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تحميل التطبيق</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 100%; height: 100%; overflow: hidden; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background: linear-gradient(135deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%);
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url('https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=1200&q=80') no-repeat center center / cover;
+            filter: blur(10px) brightness(0.7);
+            z-index: 0;
+        }
+
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 1;
+        }
+
         .container {
+            position: relative;
+            z-index: 2;
             display: flex;
             justify-content: center;
             align-items: center;
             width: 100%;
             height: 100%;
+            padding: 20px;
         }
-        .button {
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px 30px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+        }
+
+        .card h1 {
+            font-size: 26px;
+            color: #1a1a2e;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .card p {
+            font-size: 16px;
+            color: #4a4a5a;
+            margin: 10px 0 25px 0;
+            line-height: 1.6;
+        }
+
+        .card .exercise-title {
+            font-weight: 600;
+            color: #16213e;
+            background: #f0f2f7;
+            padding: 6px 14px;
+            border-radius: 30px;
             display: inline-block;
-            background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #3b82f6 100%);
+            margin-bottom: 20px;
+            font-size: 15px;
+        }
+
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: #3c6ef0;
             color: white;
+            padding: 14px 32px;
             border: none;
-            padding: 16px 36px;
+            border-radius: 50px;
             font-size: 18px;
             font-weight: 600;
-            border-radius: 999px;
             cursor: pointer;
             text-decoration: none;
-            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.35);
+            transition: background 0.3s, box-shadow 0.3s;
+            box-shadow: 0 6px 14px rgba(60, 110, 240, 0.35);
+            width: 100%;
+            max-width: 280px;
         }
-        .button:hover { transform: translateY(-1px); }
+
+        .download-btn:hover {
+            background: #2952d0;
+            box-shadow: 0 8px 20px rgba(60, 110, 240, 0.5);
+        }
+
+        .download-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+            flex-shrink: 0;
+        }
+
+        .footer {
+            margin-top: 25px;
+            font-size: 13px;
+            color: #888;
+        }
+
+        @media (max-width: 480px) {
+            .card {
+                padding: 28px 20px;
+            }
+            .card h1 {
+                font-size: 22px;
+            }
+            .download-btn {
+                font-size: 16px;
+                padding: 12px 24px;
+            }
+        }
     </style>
 </head>
 <body>
+    <div class="background"></div>
+    <div class="overlay"></div>
+
     <div class="container">
-        <a class="button" href="${googlePlayUrl}" target="_blank">متابعة</a>
+        <div class="card">
+            <h1>📚 التمرين في التطبيق</h1>
+            <p>
+                لفتح هذا التمرين، يرجى تثبيت تطبيق <strong>حسابي</strong> من متجر Google Play.
+            </p>
+            <div class="exercise-title">📌 ${exerciseTitle}</div>
+
+            <a href="${googlePlayUrl}" target="_blank" class="download-btn">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path d="M3 21l11-9-11-9v18zM14 12l11-9-11-9v18z"/>
+                </svg>
+                تحميل من Google Play
+            </a>
+
+            <div class="footer">
+                سيتم فتح التمرين تلقائياً بعد التثبيت
+            </div>
+        </div>
     </div>
 
     <script>
