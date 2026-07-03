@@ -36,15 +36,27 @@ export default {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>فتح التمرين</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
-            margin: 0;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
+        
         .container {
             text-align: center;
             background: white;
@@ -53,16 +65,19 @@ export default {
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
             max-width: 400px;
         }
+        
         h1 {
             color: #333;
             margin: 0 0 10px 0;
             font-size: 24px;
         }
+        
         p {
             color: #666;
             margin: 10px 0;
             font-size: 14px;
         }
+        
         .spinner {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #667eea;
@@ -72,10 +87,12 @@ export default {
             animation: spin 1s linear infinite;
             margin: 20px auto;
         }
+        
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
         .button {
             background-color: #667eea;
             color: white;
@@ -87,17 +104,21 @@ export default {
             margin-top: 20px;
             transition: background-color 0.3s;
         }
+        
         .button:hover {
             background-color: #764ba2;
         }
+        
         .error {
             color: #d32f2f;
             margin-top: 20px;
             display: none;
         }
+        
         .store-links {
             margin-top: 20px;
         }
+        
         .store-links a {
             display: inline-block;
             margin: 10px 5px;
@@ -105,6 +126,7 @@ export default {
             text-decoration: none;
             font-size: 14px;
         }
+        
         .store-links a:hover {
             text-decoration: underline;
         }
@@ -138,31 +160,65 @@ export default {
         const deepLink = '${deepLink}';
         const exerciseTitle = '${exerciseTitle}';
         
-        // Record the attempt time
-        const attemptTime = Date.now();
+        // Record the attempt time for timeout
+        let appOpenedTime = null;
         
-        // Try to open the app
-        window.location.href = deepLink;
+        // Create an invisible iframe to try opening the app (more reliable than window.location)
+        function tryOpenApp() {
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = deepLink;
+            document.body.appendChild(iframe);
+            
+            // Clean up iframe after a short delay
+            setTimeout(() => {
+                document.body.removeChild(iframe);
+            }, 1000);
+        }
         
-        // If app opens, this won't execute
-        // Wait 2.5 seconds to see if app opened
+        // Detect if the page visibility changes (indicates app opened)
+        function onVisibilityChange() {
+            if (document.hidden) {
+                appOpenedTime = Date.now();
+                // App likely opened, stop checking
+                document.removeEventListener('visibilitychange', onVisibilityChange);
+            }
+        }
+        
+        // Try to open app immediately (before page even loads)
+        tryOpenApp();
+        
+        // Also listen for visibility changes
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        
+        // Set a timeout to show error if app didn't open
         setTimeout(() => {
-            // Check if the page is still visible (app didn't open)
-            if (Date.now() - attemptTime > 2000) {
-                // App likely didn't open, show error
+            // If app didn't open within 3 seconds, show error
+            if (!appOpenedTime) {
                 document.querySelector('.spinner').style.display = 'none';
                 document.querySelector('p').style.display = 'none';
                 document.getElementById('error').style.display = 'block';
+                document.removeEventListener('visibilitychange', onVisibilityChange);
             }
-        }, 2500);
+        }, 3000);
         
         function tryAgain() {
-            window.location.href = deepLink;
+            document.getElementById('error').style.display = 'none';
+            document.querySelector('.spinner').style.display = 'block';
+            document.querySelector('p').style.display = 'block';
+            appOpenedTime = null;
+            
+            tryOpenApp();
+            document.addEventListener('visibilitychange', onVisibilityChange);
+            
             setTimeout(() => {
-                if (Date.now() - attemptTime > 2000) {
-                    alert('التطبيق غير مثبت على جهازك. تحميل من متجر التطبيقات؟');
+                if (!appOpenedTime) {
+                    document.querySelector('.spinner').style.display = 'none';
+                    document.querySelector('p').style.display = 'none';
+                    document.getElementById('error').style.display = 'block';
+                    document.removeEventListener('visibilitychange', onVisibilityChange);
                 }
-            }, 2500);
+            }, 3000);
         }
     </script>
 </body>
