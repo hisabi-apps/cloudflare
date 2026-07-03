@@ -210,35 +210,58 @@ app.get('/exercise', (req, res) => {
         // Record the attempt time
         const attemptTime = Date.now();
         
-        // Try to open the app with custom scheme (works immediately)
+        // Try to open the app with custom scheme using iframe (avoids page reload)
         console.log('Attempting to open app with custom scheme:', customSchemeLink);
-        window.location.href = customSchemeLink;
         
-        // If custom scheme fails, try HTTPS after 1.5 seconds
-        setTimeout(() => {
-            console.log('Custom scheme didn\'t work, trying HTTPS:', httpsLink);
-            window.location.href = httpsLink;
-        }, 1500);
+        let appOpened = false;
         
-        // If both fail, show error after 3 seconds
+        // Detect if page visibility changed (app opened)
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                appOpened = true;
+                console.log('✓ App opened, page hidden');
+            }
+        });
+        
+        // Use iframe to open custom scheme
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = customSchemeLink;
+        document.body.appendChild(iframe);
+        
+        // If app doesn't open, show error after 2.5 seconds
         setTimeout(() => {
-            if (Date.now() - attemptTime > 2500) {
-                console.log('Both schemes failed, showing error');
-                // App likely didn't open, show error
+            const elapsed = Date.now() - attemptTime;
+            console.log('Elapsed:', elapsed + 'ms, App opened:', appOpened);
+            
+            if (!appOpened) {
+                console.log('× App did not open, showing error');
                 document.querySelector('.spinner').style.display = 'none';
                 document.querySelector('p').style.display = 'none';
                 document.getElementById('error').style.display = 'block';
             }
-        }, 3000);
+        }, 2500);
         
         function tryAgain() {
-            window.location.href = customSchemeLink;
+            appOpened = false;
+            const newIframe = document.createElement('iframe');
+            newIframe.style.display = 'none';
+            newIframe.src = customSchemeLink;
+            document.body.appendChild(newIframe);
+            
+            // Show spinner again
+            document.querySelector('.spinner').style.display = 'block';
+            document.querySelector('p').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            
             setTimeout(() => {
-                window.location.href = httpsLink;
-            }, 1500);
-            setTimeout(() => {
-                alert('التطبيق غير مثبت على جهازك. تحميل من متجر التطبيقات؟');
-            }, 3000);
+                if (!appOpened) {
+                    document.querySelector('.spinner').style.display = 'none';
+                    document.querySelector('p').style.display = 'none';
+                    document.getElementById('error').style.display = 'block';
+                    alert('التطبيق غير مثبت على جهازك');
+                }
+            }, 2500);
         }
     </script>
 </body>
