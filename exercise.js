@@ -1,12 +1,13 @@
 /**
  * Exercise Deep Link Handler
- * Tries to open the app first, then shows beautiful fallback UI
+ * Handles https://hisabi-univ.onrender.com/exercise?id=...&title=...
+ * Redirects to app using custom scheme or app store
  */
 
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-
+    
     // Extract query parameters
     const exerciseId = url.searchParams.get('id');
     const exerciseTitle = url.searchParams.get('title');
@@ -26,248 +27,130 @@ export default {
     // Custom scheme deep link
     const deepLink = `hisabiuniv://exercise?id=${encodedId}&title=${encodedTitle}`;
 
-    // Create HTML response with beautiful UI
+    // Create HTML response with JavaScript redirect
     const html = `
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>تحميل التطبيق</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>فتح التمرين</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-
+        
         html, body {
             width: 100%;
             height: 100%;
             overflow: hidden;
+        }
+        
+        body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        /* Full-screen blurred background */
-        .background {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: url('https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=1200&q=80') no-repeat center center / cover;
-            filter: blur(10px) brightness(0.7);
-            z-index: 0;
-        }
-
-        /* Dark overlay for better text contrast */
-        .overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.3);
-            z-index: 1;
-        }
-
-        /* Centered card */
-        .container {
-            position: relative;
-            z-index: 2;
             display: flex;
             justify-content: center;
             align-items: center;
-            width: 100%;
-            height: 100%;
-            padding: 20px;
+            height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
-
-        .card {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 20px;
-            padding: 40px 30px;
-            max-width: 400px;
-            width: 100%;
+        
+        .container {
             text-align: center;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(4px);
-            transition: transform 0.3s ease;
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            max-width: 400px;
         }
-
-        .card:hover {
-            transform: translateY(-4px);
+        
+        h1 {
+            color: #333;
+            margin: 0 0 10px 0;
+            font-size: 24px;
         }
-
-        .card h1 {
-            font-size: 26px;
-            color: #1a1a2e;
-            margin-bottom: 10px;
-            font-weight: 700;
+        
+        p {
+            color: #666;
+            margin: 10px 0;
+            font-size: 14px;
         }
-
-        .card p {
-            font-size: 16px;
-            color: #4a4a5a;
-            margin: 10px 0 25px 0;
-            line-height: 1.6;
-        }
-
-        .card .exercise-title {
-            font-weight: 600;
-            color: #16213e;
-            background: #f0f2f7;
-            padding: 6px 14px;
-            border-radius: 30px;
-            display: inline-block;
-            margin-bottom: 20px;
-            font-size: 15px;
-        }
-
-        /* Spinner for app opening attempt */
-        .spinner-wrapper {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 15px;
-        }
-
+        
         .spinner {
-            border: 4px solid #f0f2f7;
-            border-top: 4px solid #3c6ef0;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
             border-radius: 50%;
             width: 40px;
             height: 40px;
             animation: spin 1s linear infinite;
+            margin: 20px auto;
         }
-
+        
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
-        .spinner-text {
-            font-size: 14px;
-            color: #666;
-            font-weight: 500;
-        }
-
-        /* Download button – Google Play */
-        .download-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            background: #3c6ef0;
+        
+        .button {
+            background-color: #667eea;
             color: white;
-            padding: 14px 32px;
             border: none;
-            border-radius: 50px;
-            font-size: 18px;
-            font-weight: 600;
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 5px;
             cursor: pointer;
-            text-decoration: none;
-            transition: background 0.3s, box-shadow 0.3s;
-            box-shadow: 0 6px 14px rgba(60, 110, 240, 0.35);
-            width: 100%;
-            max-width: 280px;
+            margin-top: 20px;
+            transition: background-color 0.3s;
         }
-
-        .download-btn:hover {
-            background: #2952d0;
-            box-shadow: 0 8px 20px rgba(60, 110, 240, 0.5);
+        
+        .button:hover {
+            background-color: #764ba2;
         }
-
-        .download-btn svg {
-            width: 24px;
-            height: 24px;
-            fill: currentColor;
-            flex-shrink: 0;
-        }
-
-        /* Hidden by default, shown after timeout */
-        .fallback-content {
+        
+        .error {
+            color: #d32f2f;
+            margin-top: 20px;
             display: none;
         }
-
-        .fallback-content.show {
-            display: block;
+        
+        .store-links {
+            margin-top: 20px;
         }
-
-        .loading-content {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 10px;
-        }
-
-        /* Small footer */
-        .footer {
-            margin-top: 25px;
-            font-size: 13px;
-            color: #888;
-        }
-
-        .footer a {
-            color: #3c6ef0;
+        
+        .store-links a {
+            display: inline-block;
+            margin: 10px 5px;
+            color: #667eea;
             text-decoration: none;
+            font-size: 14px;
         }
-
-        .footer a:hover {
+        
+        .store-links a:hover {
             text-decoration: underline;
-        }
-
-        /* Responsive */
-        @media (max-width: 480px) {
-            .card {
-                padding: 28px 20px;
-            }
-            .card h1 {
-                font-size: 22px;
-            }
-            .download-btn {
-                font-size: 16px;
-                padding: 12px 24px;
-            }
         }
     </style>
 </head>
 <body>
-
-    <div class="background"></div>
-    <div class="overlay"></div>
-
     <div class="container">
-        <div class="card">
-            <h1>📚 التمرين في التطبيق</h1>
-            
-            <!-- Loading state: trying to open app -->
-            <div class="loading-content" id="loadingContent">
-                <p>جاري محاولة فتح التطبيق...</p>
-                <div class="exercise-title">📌 ${exerciseTitle}</div>
-                <div class="spinner-wrapper">
-                    <div class="spinner"></div>
-                    <span class="spinner-text">انتظر قليلاً...</span>
-                </div>
-            </div>
-
-            <!-- Fallback state: show download button -->
-            <div class="fallback-content" id="fallbackContent">
-                <p>
-                    لفتح هذا التمرين، يرجى تثبيت تطبيق <strong>حسابي</strong> من متجر Google Play.
-                </p>
-                <div class="exercise-title">📌 ${exerciseTitle}</div>
-
-                <a href="https://play.google.com/store/apps/details?id=com.hisabi.univpro" target="_blank" class="download-btn">
-                    <svg viewBox="0 0 24 24" width="24" height="24">
-                        <path d="M3 21l11-9-11-9v18zM14 12l11-9-11-9v18z"/>
-                    </svg>
-                    تحميل من Google Play
+        <h1>فتح التمرين</h1>
+        <p>جاري فتح التمرين في التطبيق...</p>
+        <div class="spinner"></div>
+        
+        <div class="error" id="error">
+            <p><strong>لم نتمكن من فتح التطبيق</strong></p>
+            <p style="font-size: 12px;">تأكد من تثبيت تطبيق حسابي على جهازك</p>
+            <button class="button" onclick="tryAgain()">حاول مرة أخرى</button>
+            <div class="store-links">
+                <p style="margin: 15px 0 10px 0; color: #999;">أو قم بتحميل التطبيق:</p>
+                <a href="https://play.google.com/store/apps/details?id=com.hisabi.univpro" target="_blank">
+                    🔗 متجر Google Play
                 </a>
-
-                <div class="footer">
-                    سيتم فتح التمرين تلقائياً بعد التثبيت والفتح
-                </div>
+                <br>
+                <a href="https://apps.apple.com/app/hisabi/id1234567890" target="_blank">
+                    🔗 App Store
+                </a>
             </div>
         </div>
     </div>
@@ -275,46 +158,69 @@ export default {
     <script>
         // Try to open the app using custom scheme
         const deepLink = '${deepLink}';
+        const exerciseTitle = '${exerciseTitle}';
+        
+        // Record the attempt time for timeout
         let appOpenedTime = null;
-
-        // Create an invisible iframe to try opening the app (more reliable)
+        
+        // Create an invisible iframe to try opening the app (more reliable than window.location)
         function tryOpenApp() {
             const iframe = document.createElement('iframe');
             iframe.style.display = 'none';
             iframe.src = deepLink;
             document.body.appendChild(iframe);
-
+            
             // Clean up iframe after a short delay
             setTimeout(() => {
                 document.body.removeChild(iframe);
             }, 1000);
         }
-
-        // Detect if page visibility changes (indicates app opened)
+        
+        // Detect if the page visibility changes (indicates app opened)
         function onVisibilityChange() {
             if (document.hidden) {
                 appOpenedTime = Date.now();
+                // App likely opened, stop checking
                 document.removeEventListener('visibilitychange', onVisibilityChange);
             }
         }
-
-        // Try to open app immediately
+        
+        // Try to open app immediately (before page even loads)
         tryOpenApp();
-
-        // Listen for visibility changes
+        
+        // Also listen for visibility changes
         document.addEventListener('visibilitychange', onVisibilityChange);
-
-        // Set timeout to show fallback if app didn't open
+        
+        // Set a timeout to show error if app didn't open
         setTimeout(() => {
+            // If app didn't open within 3 seconds, show error
             if (!appOpenedTime) {
-                // App didn't open, show fallback UI
-                document.getElementById('loadingContent').style.display = 'none';
-                document.getElementById('fallbackContent').classList.add('show');
+                document.querySelector('.spinner').style.display = 'none';
+                document.querySelector('p').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
                 document.removeEventListener('visibilitychange', onVisibilityChange);
             }
-        }, 3500);
+        }, 3000);
+        
+        function tryAgain() {
+            document.getElementById('error').style.display = 'none';
+            document.querySelector('.spinner').style.display = 'block';
+            document.querySelector('p').style.display = 'block';
+            appOpenedTime = null;
+            
+            tryOpenApp();
+            document.addEventListener('visibilitychange', onVisibilityChange);
+            
+            setTimeout(() => {
+                if (!appOpenedTime) {
+                    document.querySelector('.spinner').style.display = 'none';
+                    document.querySelector('p').style.display = 'none';
+                    document.getElementById('error').style.display = 'block';
+                    document.removeEventListener('visibilitychange', onVisibilityChange);
+                }
+            }, 3000);
+        }
     </script>
-
 </body>
 </html>
     `;
