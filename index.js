@@ -33,6 +33,49 @@ const app = express();
 
 app.use('/.well-known', express.static(path.join(__dirname, '.well-known')));
 
+// Explicitly serve apple-app-site-association without .json extension
+app.get('/.well-known/apple-app-site-association', (req, res) => {
+  const fs = require('fs');
+  const filePath = path.join(__dirname, '.well-known', 'apple-app-site-association.json');
+  
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(filePath);
+  }
+  
+  // Fallback: return a basic response
+  const fallbackContent = {
+    "applinks": {
+      "apps": [],
+      "details": [
+        {
+          "appID": "TEAM_ID.com.hisabi.univpro",
+          "paths": ["/exercise", "/files/*"]
+        }
+      ]
+    }
+  };
+  
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  return res.json(fallbackContent);
+});
+
+// Serve assetlinks.json for Android
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  const fs = require('fs');
+  const filePath = path.join(__dirname, '.well-known', 'assetlinks.json');
+  
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(filePath);
+  }
+  
+  return res.status(404).json({ error: 'assetlinks.json not found' });
+});
+
 // Deep link handler for exercises
 app.get('/exercise', (req, res) => {
   const exerciseId = req.query.id || '';
