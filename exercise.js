@@ -27,7 +27,8 @@ export default {
     // Custom scheme deep link
     const deepLink = `hisabiuniv://exercise?id=${encodedId}&title=${encodedTitle}`;
 
-    // Create HTML response with JavaScript redirect
+    // Create a simple landing page with a single button that opens the app on Google Play
+    const googlePlayUrl = 'https://play.google.com/store/apps/details?id=com.hisabi.univpro';
     const html = `
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -36,18 +37,8 @@ export default {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>فتح التمرين</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        html, body {
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
@@ -56,170 +47,47 @@ export default {
             height: 100vh;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
-        
         .container {
             text-align: center;
             background: white;
-            padding: 40px;
-            border-radius: 10px;
+            padding: 32px 24px;
+            border-radius: 14px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-            max-width: 400px;
+            max-width: 360px;
+            width: 90%;
         }
-        
-        h1 {
-            color: #333;
-            margin: 0 0 10px 0;
-            font-size: 24px;
-        }
-        
-        p {
-            color: #666;
-            margin: 10px 0;
-            font-size: 14px;
-        }
-        
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 20px auto;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
+        h1 { color: #333; font-size: 22px; margin-bottom: 12px; }
+        p { color: #666; font-size: 14px; line-height: 1.7; margin-bottom: 18px; }
         .button {
+            display: inline-block;
             background-color: #667eea;
             color: white;
             border: none;
-            padding: 12px 30px;
+            padding: 12px 24px;
             font-size: 16px;
-            border-radius: 5px;
+            border-radius: 8px;
             cursor: pointer;
-            margin-top: 20px;
-            transition: background-color 0.3s;
-        }
-        
-        .button:hover {
-            background-color: #764ba2;
-        }
-        
-        .error {
-            color: #d32f2f;
-            margin-top: 20px;
-            display: none;
-        }
-        
-        .store-links {
-            margin-top: 20px;
-        }
-        
-        .store-links a {
-            display: inline-block;
-            margin: 10px 5px;
-            color: #667eea;
             text-decoration: none;
-            font-size: 14px;
         }
-        
-        .store-links a:hover {
-            text-decoration: underline;
-        }
+        .button:hover { background-color: #5a6fd8; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>فتح التمرين</h1>
-        <p>جاري فتح التمرين في التطبيق...</p>
-        <div class="spinner"></div>
-        
-        <div class="error" id="error">
-            <p><strong>لم نتمكن من فتح التطبيق</strong></p>
-            <p style="font-size: 12px;">تأكد من تثبيت تطبيق حسابي على جهازك</p>
-            <button class="button" onclick="tryAgain()">حاول مرة أخرى</button>
-            <div class="store-links">
-                <p style="margin: 15px 0 10px 0; color: #999;">أو قم بتحميل التطبيق:</p>
-                <a href="https://play.google.com/store/apps/details?id=com.hisabi.univpro" target="_blank">
-                    🔗 متجر Google Play
-                </a>
-                <br>
-                <a href="https://apps.apple.com/app/hisabi/id1234567890" target="_blank">
-                    🔗 App Store
-                </a>
-            </div>
-        </div>
+        <p>إذا كان التطبيق مثبتًا، فسيتم فتحه مباشرة. وإذا لم يكن مثبتًا، اضغط على الزر أدناه.</p>
+        <a class="button" href="${googlePlayUrl}" target="_blank">فتح التطبيق على Google Play</a>
     </div>
 
     <script>
-        // Try to open the app using custom scheme
         const deepLink = '${deepLink}';
-        const exerciseTitle = '${exerciseTitle}';
-        
-        // Record the attempt time for timeout
-        let appOpenedTime = null;
-        
-        // Create an invisible iframe to try opening the app (more reliable than window.location)
-        function tryOpenApp() {
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = deepLink;
-            document.body.appendChild(iframe);
-            
-            // Clean up iframe after a short delay
-            setTimeout(() => {
-                document.body.removeChild(iframe);
-            }, 1000);
-        }
-        
-        // Detect if the page visibility changes (indicates app opened)
-        function onVisibilityChange() {
-            if (document.hidden) {
-                appOpenedTime = Date.now();
-                // App likely opened, stop checking
-                document.removeEventListener('visibilitychange', onVisibilityChange);
-            }
-        }
-        
-        // Try to open app immediately (before page even loads)
-        tryOpenApp();
-        
-        // Also listen for visibility changes
-        document.addEventListener('visibilitychange', onVisibilityChange);
-        
-        // Set a timeout to show error if app didn't open
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = deepLink;
+        document.body.appendChild(iframe);
         setTimeout(() => {
-            // If app didn't open within 3 seconds, show error
-            if (!appOpenedTime) {
-                document.querySelector('.spinner').style.display = 'none';
-                document.querySelector('p').style.display = 'none';
-                document.getElementById('error').style.display = 'block';
-                document.removeEventListener('visibilitychange', onVisibilityChange);
-            }
-        }, 3000);
-        
-        function tryAgain() {
-            document.getElementById('error').style.display = 'none';
-            document.querySelector('.spinner').style.display = 'block';
-            document.querySelector('p').style.display = 'block';
-            appOpenedTime = null;
-            
-            tryOpenApp();
-            document.addEventListener('visibilitychange', onVisibilityChange);
-            
-            setTimeout(() => {
-                if (!appOpenedTime) {
-                    document.querySelector('.spinner').style.display = 'none';
-                    document.querySelector('p').style.display = 'none';
-                    document.getElementById('error').style.display = 'block';
-                    document.removeEventListener('visibilitychange', onVisibilityChange);
-                }
-            }, 3000);
-        }
+            document.body.removeChild(iframe);
+        }, 1000);
     </script>
 </body>
 </html>
