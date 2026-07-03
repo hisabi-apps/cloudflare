@@ -96,7 +96,8 @@ app.get('/exercise', (req, res) => {
   const httpsDeepLink = `https://hisabi-univ.onrender.com/exercise?id=${encodedId}&title=${encodedTitle}`;
 
   // Create a simple landing page with a single button that opens the app on Google Play
-  const googlePlayUrl = 'https://play.google.com/store/apps/details?id=com.hisabi.univpro';
+  // Include Play Store referrer so the app can receive exercise_id and title after install
+  const googlePlayUrl = `https://play.google.com/store/apps/details?id=com.hisabi.univpro&referrer=${encodeURIComponent(`exercise_id=${exerciseId}&title=${exerciseTitle}`)}`;
   const html = `
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
