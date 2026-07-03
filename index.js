@@ -46,8 +46,11 @@ app.get('/exercise', (req, res) => {
   const encodedId = encodeURIComponent(exerciseId);
   const encodedTitle = encodeURIComponent(exerciseTitle);
 
-  // Custom scheme deep link
-  const deepLink = `hisabiuniv://exercise?id=${encodedId}&title=${encodedTitle}`;
+  // Try custom scheme first (works immediately without verification)
+  const customSchemeDeepLink = `hisabiuniv://exercise?id=${encodedId}&title=${encodedTitle}`;
+  
+  // HTTPS fallback (requires assetlinks.json verification - may take 24-48h)
+  const httpsDeepLink = `https://hisabi-univ.onrender.com/exercise?id=${encodedId}&title=${encodedTitle}`;
 
   // Create HTML response with JavaScript redirect
   const html = `
@@ -156,35 +159,43 @@ app.get('/exercise', (req, res) => {
     </div>
 
     <script>
-        // Try to open the app using custom scheme
-        const deepLink = '${deepLink}';
+        // Try custom scheme first (hisabiuniv://)
+        const customSchemeLink = '${customSchemeDeepLink}';
+        const httpsLink = '${httpsDeepLink}';
         const exerciseTitle = '${exerciseTitle}';
         
         // Record the attempt time
         const attemptTime = Date.now();
         
-        // Try to open the app
-        window.location.href = deepLink;
+        // Try to open the app with custom scheme (works immediately)
+        console.log('Attempting to open app with custom scheme:', customSchemeLink);
+        window.location.href = customSchemeLink;
         
-        // If app opens, this won't execute
-        // Wait 2.5 seconds to see if app opened
+        // If custom scheme fails, try HTTPS after 1.5 seconds
         setTimeout(() => {
-            // Check if the page is still visible (app didn't open)
-            if (Date.now() - attemptTime > 2000) {
+            console.log('Custom scheme didn\'t work, trying HTTPS:', httpsLink);
+            window.location.href = httpsLink;
+        }, 1500);
+        
+        // If both fail, show error after 3 seconds
+        setTimeout(() => {
+            if (Date.now() - attemptTime > 2500) {
+                console.log('Both schemes failed, showing error');
                 // App likely didn't open, show error
                 document.querySelector('.spinner').style.display = 'none';
                 document.querySelector('p').style.display = 'none';
                 document.getElementById('error').style.display = 'block';
             }
-        }, 2500);
+        }, 3000);
         
         function tryAgain() {
-            window.location.href = deepLink;
+            window.location.href = customSchemeLink;
             setTimeout(() => {
-                if (Date.now() - attemptTime > 2000) {
-                    alert('التطبيق غير مثبت على جهازك. تحميل من متجر التطبيقات؟');
-                }
-            }, 2500);
+                window.location.href = httpsLink;
+            }, 1500);
+            setTimeout(() => {
+                alert('التطبيق غير مثبت على جهازك. تحميل من متجر التطبيقات؟');
+            }, 3000);
         }
     </script>
 </body>
