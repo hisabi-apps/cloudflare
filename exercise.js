@@ -1,13 +1,13 @@
 /**
  * Exercise Deep Link Handler
- * Handles https://hisabi-univ.onrender.com/exercise?id=...&title=...
- * Redirects to app using custom scheme or app store
+ * Redirects to Google Play with a blurred exam background
+ * Tries to open the app first if installed
  */
 
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-    
+
     // Extract query parameters
     const exerciseId = url.searchParams.get('id');
     const exerciseTitle = url.searchParams.get('title');
@@ -27,144 +27,232 @@ export default {
     // Custom scheme deep link
     const deepLink = `hisabiuniv://exercise?id=${encodedId}&title=${encodedTitle}`;
 
-    // Create HTML response with JavaScript redirect
+    // Create HTML response with beautiful design
     const html = `
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>فتح التمرين</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تحميل التطبيق</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         html, body {
             width: 100%;
             height: 100%;
             overflow: hidden;
-        }
-        
-        body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* Full‑screen blurred background */
+        .background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            filter: blur(10px) brightness(0.7);
+            z-index: 0;
+        }
+
+        /* Dark overlay for better text contrast */
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 1;
+        }
+
+        /* Centered card */
+        .container {
+            position: relative;
+            z-index: 2;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            width: 100%;
+            height: 100%;
+            padding: 20px;
         }
-        
-        .container {
-            text-align: center;
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px 30px;
             max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            transition: transform 0.3s ease;
         }
-        
-        h1 {
-            color: #333;
-            margin: 0 0 10px 0;
-            font-size: 24px;
+
+        .card:hover {
+            transform: translateY(-4px);
         }
-        
-        p {
-            color: #666;
-            margin: 10px 0;
-            font-size: 14px;
+
+        .card h1 {
+            font-size: 26px;
+            color: #1a1a2e;
+            margin-bottom: 10px;
+            font-weight: 700;
         }
-        
+
+        .card p {
+            font-size: 16px;
+            color: #4a4a5a;
+            margin: 10px 0 25px 0;
+            line-height: 1.6;
+        }
+
+        .card .exercise-title {
+            font-weight: 600;
+            color: #16213e;
+            background: #f0f2f7;
+            padding: 6px 14px;
+            border-radius: 30px;
+            display: inline-block;
+            margin-bottom: 20px;
+            font-size: 15px;
+        }
+
+        /* Spinner for trying to open app */
         .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
+            width: 30px;
+            height: 30px;
             animation: spin 1s linear infinite;
-            margin: 20px auto;
+            margin: 0 auto 15px;
+            display: none;
         }
-        
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        
-        .button {
-            background-color: #667eea;
+
+        .spinner.show {
+            display: block;
+        }
+
+        /* Single button – Google Play */
+        .download-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: #3c6ef0;
             color: white;
+            padding: 14px 32px;
             border: none;
-            padding: 12px 30px;
-            font-size: 16px;
-            border-radius: 5px;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: 600;
             cursor: pointer;
-            margin-top: 20px;
-            transition: background-color 0.3s;
-        }
-        
-        .button:hover {
-            background-color: #764ba2;
-        }
-        
-        .error {
-            color: #d32f2f;
-            margin-top: 20px;
-            display: none;
-        }
-        
-        .store-links {
-            margin-top: 20px;
-        }
-        
-        .store-links a {
-            display: inline-block;
-            margin: 10px 5px;
-            color: #667eea;
             text-decoration: none;
-            font-size: 14px;
+            transition: background 0.3s, box-shadow 0.3s;
+            box-shadow: 0 6px 14px rgba(60, 110, 240, 0.35);
+            width: 100%;
+            max-width: 280px;
         }
-        
-        .store-links a:hover {
+
+        .download-btn:hover {
+            background: #2952d0;
+            box-shadow: 0 8px 20px rgba(60, 110, 240, 0.5);
+        }
+
+        .download-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+            flex-shrink: 0;
+        }
+
+        /* Small footer */
+        .footer {
+            margin-top: 25px;
+            font-size: 13px;
+            color: #888;
+        }
+
+        .footer a {
+            color: #3c6ef0;
+            text-decoration: none;
+        }
+
+        .footer a:hover {
             text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            .card {
+                padding: 28px 20px;
+            }
+            .card h1 {
+                font-size: 22px;
+            }
+            .download-btn {
+                font-size: 16px;
+                padding: 12px 24px;
+            }
         }
     </style>
 </head>
 <body>
+
+    <div class="background"></div>
+    <div class="overlay"></div>
+
     <div class="container">
-        <h1>فتح التمرين</h1>
-        <p>جاري فتح التمرين في التطبيق...</p>
-        <div class="spinner"></div>
-        
-        <div class="error" id="error">
-            <p><strong>لم نتمكن من فتح التطبيق</strong></p>
-            <p style="font-size: 12px;">تأكد من تثبيت تطبيق حسابي على جهازك</p>
-            <button class="button" onclick="tryAgain()">حاول مرة أخرى</button>
-            <div class="store-links">
-                <p style="margin: 15px 0 10px 0; color: #999;">أو قم بتحميل التطبيق:</p>
-                <a href="https://play.google.com/store/apps/details?id=com.hisabi.univpro" target="_blank">
-                    🔗 متجر Google Play
-                </a>
-                <br>
-                <a href="https://apps.apple.com/app/hisabi/id1234567890" target="_blank">
-                    🔗 App Store
-                </a>
+        <div class="card">
+            <div class="spinner" id="spinner"></div>
+            <h1>📚 التمرين في التطبيق</h1>
+            <p id="message">
+                جاري فتح التطبيق... إذا لم ينفتح، اضغط على الزر أدناه.
+            </p>
+            <!-- Optional: show exercise title -->
+            <div class="exercise-title">📌 ${exerciseTitle}</div>
+
+            <!-- Single button to Google Play -->
+            <a href="https://play.google.com/store/apps/details?id=com.hisabi.univpro" target="_blank" class="download-btn" id="playBtn">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path d="M3 21l11-9-11-9v18zM14 12l11-9-11-9v18z"/>
+                </svg>
+                تحميل من Google Play
+            </a>
+
+            <div class="footer" id="footer">
+                محاولة فتح التطبيق...
             </div>
         </div>
     </div>
 
     <script>
-        // Try to open the app using custom scheme
         const deepLink = '${deepLink}';
-        const exerciseTitle = '${exerciseTitle}';
+        const spinner = document.getElementById('spinner');
+        const message = document.getElementById('message');
+        const footer = document.getElementById('footer');
+        const playBtn = document.getElementById('playBtn');
         
-        // Record the attempt time for timeout
-        let appOpenedTime = null;
-        
-        // Create an invisible iframe to try opening the app (more reliable than window.location)
+        let appOpened = false;
+
+        // Function to try opening the app
         function tryOpenApp() {
+            spinner.classList.add('show');
+            
+            // Create invisible iframe to try opening the app
             const iframe = document.createElement('iframe');
             iframe.style.display = 'none';
             iframe.src = deepLink;
@@ -172,54 +260,55 @@ export default {
             
             // Clean up iframe after a short delay
             setTimeout(() => {
-                document.body.removeChild(iframe);
-            }, 1000);
-        }
-        
-        // Detect if the page visibility changes (indicates app opened)
-        function onVisibilityChange() {
-            if (document.hidden) {
-                appOpenedTime = Date.now();
-                // App likely opened, stop checking
-                document.removeEventListener('visibilitychange', onVisibilityChange);
-            }
-        }
-        
-        // Try to open app immediately (before page even loads)
-        tryOpenApp();
-        
-        // Also listen for visibility changes
-        document.addEventListener('visibilitychange', onVisibilityChange);
-        
-        // Set a timeout to show error if app didn't open
-        setTimeout(() => {
-            // If app didn't open within 3 seconds, show error
-            if (!appOpenedTime) {
-                document.querySelector('.spinner').style.display = 'none';
-                document.querySelector('p').style.display = 'none';
-                document.getElementById('error').style.display = 'block';
-                document.removeEventListener('visibilitychange', onVisibilityChange);
-            }
-        }, 3000);
-        
-        function tryAgain() {
-            document.getElementById('error').style.display = 'none';
-            document.querySelector('.spinner').style.display = 'block';
-            document.querySelector('p').style.display = 'block';
-            appOpenedTime = null;
+                if (document.body.contains(iframe)) {
+                    document.body.removeChild(iframe);
+                }
+            }, 500);
             
-            tryOpenApp();
-            document.addEventListener('visibilitychange', onVisibilityChange);
-            
+            // Check if app opened by detecting visibility change
+            const handleVisibilityChange = () => {
+                if (document.hidden) {
+                    appOpened = true;
+                    spinner.classList.remove('show');
+                    message.textContent = 'تم فتح التطبيق بنجاح!';
+                    footer.textContent = 'تم فتح التمرين في التطبيق';
+                    document.removeEventListener('visibilitychange', handleVisibilityChange);
+                }
+            };
+
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+
+            // If app didn't open within 3 seconds, show Google Play option
             setTimeout(() => {
-                if (!appOpenedTime) {
-                    document.querySelector('.spinner').style.display = 'none';
-                    document.querySelector('p').style.display = 'none';
-                    document.getElementById('error').style.display = 'block';
-                    document.removeEventListener('visibilitychange', onVisibilityChange);
+                if (!appOpened) {
+                    spinner.classList.remove('show');
+                    message.innerHTML = 'لفتح هذا التمرين، يرجى تثبيت تطبيق <strong>حسابي</strong> من متجر Google Play.';
+                    footer.textContent = 'سيتم فتح التمرين تلقائياً بعد التثبيت';
+                    playBtn.textContent = '📥 تحميل من Google Play';
+                    document.removeEventListener('visibilitychange', handleVisibilityChange);
                 }
             }, 3000);
         }
+
+        // Try to open app on page load
+        window.addEventListener('load', () => {
+            tryOpenApp();
+        });
+
+        // Also try when user clicks the button
+        playBtn.addEventListener('click', (e) => {
+            if (!appOpened) {
+                e.preventDefault();
+                tryOpenApp();
+                
+                // Fallback: open Google Play after 4 seconds
+                setTimeout(() => {
+                    if (!appOpened) {
+                        window.open('https://play.google.com/store/apps/details?id=com.hisabi.univpro', '_blank');
+                    }
+                }, 4000);
+            }
+        });
     </script>
 </body>
 </html>
