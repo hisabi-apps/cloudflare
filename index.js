@@ -519,3 +519,70 @@ app.listen(PORT, () => {
   console.log('  GET  /api/files?subject=...&page=1&limit=20');
   console.log('  PATCH /api/moderate/:id');
 });
+// -------------------- جلب الملفات المعلقة للمراجعة --------------------
+app.get('/api/pending', async (req, res) => {
+  try {
+    // مفتاح الكاش الخاص بالملفات المعلقة (نخزنها لمدة دقيقة واحدة فقط لأنها تتغير كثيراً)
+    const cacheKey = 'pending_files';
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    // استعلام لجلب جميع الملفات التي حالتها 'pending'
+    const snapshot = await db.collection('files')
+      .where('reviewStatus', '==', 'pending')
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    const pendingFiles = [];
+    snapshot.forEach(doc => {
+      pendingFiles.push({
+        id: doc.id, // ✅ مهم: نرسل الـ id مع البيانات
+        ...doc.data(),
+      });
+    });
+
+    // تخزين النتيجة في الكاش لمدة 60 ثانية
+    cache.set(cacheKey, pendingFiles, 300);
+    res.json(pendingFiles);
+  } catch (error) {
+    console.error('Error fetching pending files:', error);
+    res.status(500).json({ error: 'Failed to fetch pending files.' });
+  }
+});
+
+// -------------------- تحديث بيانات ملف (Metadata) --------------------
+app.patch('/api/files/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, subject, year, state, specialty, fileYear } = req.body;
+
+    // 1. التحقق من وجود الملف
+    const docRef = db.collection('files').doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    // 2. بناء كائن التحديث (نضيف فقط الحقول المرسلة)
+    const updateData = {};
+    if (title !== undefined) updateData.title = title.trim();
+    if (subject !== undefined) updateData.subject = subject.trim();
+    if (year !== undefined) updateData.year = year.trim();
+    if (state !== undefined) updateData.state = state.trim();
+    if (specialty !== undefined) updateData.specialty = specialty.trim();
+    if (fileYear !== undefined) updateData.fileYear = fileYear.trim();
+
+    // 3. تنفيذ التحديث في Firestore
+    await docRef.update(updateData);
+
+    // 4. مسح الكاش (لأن البيانات تغيرت)
+    cache.flushAll();
+
+    res.json({ success: true, id });
+  } catch (error) {
+    console.error('Update metadata failed:', error);
+    res.status(500).json({ error: 'Failed to update metadata.' });
+  }
+});
