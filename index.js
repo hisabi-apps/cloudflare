@@ -2,17 +2,36 @@ const path = require('path');
 require('dotenv').config({
   path: path.resolve(__dirname, '..', '.env'),
 });
+
 const express = require('express');
 const multer = require('multer');
-const {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  ListObjectsV2Command,
-  DeleteObjectCommand,
-} = require('@aws-sdk/client-s3');
+const NodeCache = require('node-cache');
+const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
+// -------------------- Firebase Admin SDK --------------------
+const admin = require('firebase-admin');
+
+// -------------------- تحقق من وجود مفتاح الخدمة --------------------
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  console.error('❌ Missing FIREBASE_SERVICE_ACCOUNT environment variable.');
+  console.error('Please set it to the JSON string of your service account key.');
+  process.exit(1);
+}
+
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+  console.log('✅ Firebase Admin initialized successfully.');
+} catch (error) {
+  console.error('❌ Failed to initialize Firebase Admin:', error.message);
+  process.exit(1);
+}
+
+const db = admin.firestore();
+
+// -------------------- المتغيرات البيئية الأساسية --------------------
 const {
   R2_ACCOUNT_ID,
   R2_ACCESS_KEY_ID,
@@ -24,270 +43,115 @@ const {
 } = process.env;
 
 if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET_NAME) {
-  console.error('Missing Cloudflare R2 environment variables. See .env.example.');
+  console.error('❌ Missing Cloudflare R2 environment variables. See .env.example.');
   process.exit(1);
 }
 
 const upload = multer({ storage: multer.memoryStorage() });
 const app = express();
+app.use(express.json());
 
+// -------------------- نظام التخزين المؤقت (Cache) --------------------
+const cache = new NodeCache({ stdTTL: 120, checkperiod: 130 });
+
+// -------------------- نقاط .well-known و Deep Link (دون تغيير) --------------------
 app.use('/.well-known', express.static(path.join(__dirname, '.well-known')));
 
-// Explicitly serve apple-app-site-association without .json extension
 app.get('/.well-known/apple-app-site-association', (req, res) => {
   const fs = require('fs');
   const filePath = path.join(__dirname, '.well-known', 'apple-app-site-association.json');
-  
   if (fs.existsSync(filePath)) {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.sendFile(filePath);
   }
-  
-  // Fallback: return a basic response
   const fallbackContent = {
-    "applinks": {
-      "apps": [],
-      "details": [
-        {
-          "appID": "TEAM_ID.com.hisabi.univpro",
-          "paths": ["/exercise", "/files/*"]
-        }
-      ]
-    }
+    applinks: {
+      apps: [],
+      details: [{ appID: 'TEAM_ID.com.hisabi.univpro', paths: ['/exercise', '/files/*'] }],
+    },
   };
-  
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   return res.json(fallbackContent);
 });
 
-// Serve assetlinks.json for Android
 app.get('/.well-known/assetlinks.json', (req, res) => {
   const fs = require('fs');
   const filePath = path.join(__dirname, '.well-known', 'assetlinks.json');
-  
   if (fs.existsSync(filePath)) {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     return res.sendFile(filePath);
   }
-  
   return res.status(404).json({ error: 'assetlinks.json not found' });
 });
 
-// Deep link handler for exercises
 app.get('/exercise', (req, res) => {
   const exerciseId = req.query.id || '';
   const exerciseTitle = req.query.title || 'تمرين';
-
   if (!exerciseId) {
     return res.status(400).json({ error: 'Missing exercise ID parameter' });
   }
-
-  // Encode parameters for deep link
   const encodedId = encodeURIComponent(exerciseId);
   const encodedTitle = encodeURIComponent(exerciseTitle);
-
-  // Try custom scheme first (works immediately without verification)
   const customSchemeDeepLink = `hisabiuniv://exercise?id=${encodedId}&title=${encodedTitle}`;
-  
-  // HTTPS fallback (requires assetlinks.json verification - may take 24-48h)
-  const httpsDeepLink = `https://hisabi-univ.onrender.com/exercise?id=${encodedId}&title=${encodedTitle}`;
-
-  // Create a simple landing page with a single button that opens the app on Google Play
-  // Include Play Store referrer so the app can receive exercise_id and title after install
   const googlePlayUrl = `https://play.google.com/store/apps/details?id=com.hisabi.univpro&referrer=${encodeURIComponent(`exercise_id=${exerciseId}&title=${exerciseTitle}`)}`;
-  const html = `
-<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>تحميل التطبيق</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        html, body {
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        .background {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: url('https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=1200&q=80') no-repeat center center / cover;
-            filter: blur(10px) brightness(0.7);
-            z-index: 0;
-        }
-
-        .overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.3);
-            z-index: 1;
-        }
-
-        .container {
-            position: relative;
-            z-index: 2;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            width: 100%;
-            height: 100%;
-            padding: 20px;
-        }
-
-        .card {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 20px;
-            padding: 40px 30px;
-            max-width: 400px;
-            width: 100%;
-            text-align: center;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(4px);
-            transition: transform 0.3s ease;
-        }
-
-        .card:hover {
-            transform: translateY(-4px);
-        }
-
-        .card h1 {
-            font-size: 26px;
-            color: #1a1a2e;
-            margin-bottom: 10px;
-            font-weight: 700;
-        }
-
-        .card p {
-            font-size: 16px;
-            color: #4a4a5a;
-            margin: 10px 0 25px 0;
-            line-height: 1.6;
-        }
-
-        .card .exercise-title {
-            font-weight: 600;
-            color: #16213e;
-            background: #f0f2f7;
-            padding: 6px 14px;
-            border-radius: 30px;
-            display: inline-block;
-            margin-bottom: 20px;
-            font-size: 15px;
-        }
-
-        .download-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            background: #3c6ef0;
-            color: white;
-            padding: 14px 32px;
-            border: none;
-            border-radius: 50px;
-            font-size: 18px;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-            transition: background 0.3s, box-shadow 0.3s;
-            box-shadow: 0 6px 14px rgba(60, 110, 240, 0.35);
-            width: 100%;
-            max-width: 280px;
-        }
-
-        .download-btn:hover {
-            background: #2952d0;
-            box-shadow: 0 8px 20px rgba(60, 110, 240, 0.5);
-        }
-
-        .download-btn svg {
-            width: 24px;
-            height: 24px;
-            fill: currentColor;
-            flex-shrink: 0;
-        }
-
-        .footer {
-            margin-top: 25px;
-            font-size: 13px;
-            color: #888;
-        }
-
-        @media (max-width: 480px) {
-            .card {
-                padding: 28px 20px;
-            }
-            .card h1 {
-                font-size: 22px;
-            }
-            .download-btn {
-                font-size: 16px;
-                padding: 12px 24px;
-            }
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .background { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: url('https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=1200&q=80') no-repeat center center / cover; filter: blur(10px) brightness(0.7); z-index: 0; }
+        .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.3); z-index: 1; }
+        .container { position: relative; z-index: 2; display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; padding: 20px; }
+        .card { background: rgba(255, 255, 255, 0.95); border-radius: 20px; padding: 40px 30px; max-width: 400px; width: 100%; text-align: center; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4); backdrop-filter: blur(4px); transition: transform 0.3s ease; }
+        .card:hover { transform: translateY(-4px); }
+        .card h1 { font-size: 26px; color: #1a1a2e; margin-bottom: 10px; font-weight: 700; }
+        .card p { font-size: 16px; color: #4a4a5a; margin: 10px 0 25px 0; line-height: 1.6; }
+        .card .exercise-title { font-weight: 600; color: #16213e; background: #f0f2f7; padding: 6px 14px; border-radius: 30px; display: inline-block; margin-bottom: 20px; font-size: 15px; }
+        .download-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: #3c6ef0; color: white; padding: 14px 32px; border: none; border-radius: 50px; font-size: 18px; font-weight: 600; cursor: pointer; text-decoration: none; transition: background 0.3s, box-shadow 0.3s; box-shadow: 0 6px 14px rgba(60, 110, 240, 0.35); width: 100%; max-width: 280px; }
+        .download-btn:hover { background: #2952d0; box-shadow: 0 8px 20px rgba(60, 110, 240, 0.5); }
+        .download-btn svg { width: 24px; height: 24px; fill: currentColor; flex-shrink: 0; }
+        .footer { margin-top: 25px; font-size: 13px; color: #888; }
+        @media (max-width: 480px) { .card { padding: 28px 20px; } .card h1 { font-size: 22px; } .download-btn { font-size: 16px; padding: 12px 24px; } }
     </style>
 </head>
 <body>
     <div class="background"></div>
     <div class="overlay"></div>
-
     <div class="container">
         <div class="card">
             <h1>📚 التمرين في التطبيق</h1>
-            <p>
-                لفتح هذا التمرين، يرجى تثبيت تطبيق <strong>حسابي</strong> من متجر Google Play.
-            </p>
+            <p>لفتح هذا التمرين، يرجى تثبيت تطبيق <strong>حسابي</strong> من متجر Google Play.</p>
             <div class="exercise-title">📌 ${exerciseTitle}</div>
-
             <a href="${googlePlayUrl}" target="_blank" class="download-btn">
-                <svg viewBox="0 0 24 24" width="24" height="24">
-                    <path d="M3 21l11-9-11-9v18zM14 12l11-9-11-9v18z"/>
-                </svg>
+                <svg viewBox="0 0 24 24" width="24" height="24"><path d="M3 21l11-9-11-9v18zM14 12l11-9-11-9v18z"/></svg>
                 تحميل من Google Play
             </a>
-
-            <div class="footer">
-                سيتم فتح التمرين تلقائياً بعد التثبيت
-            </div>
+            <div class="footer">سيتم فتح التمرين تلقائياً بعد التثبيت</div>
         </div>
     </div>
-
     <script>
         const deepLink = '${customSchemeDeepLink}';
         const iframe = document.createElement('iframe');
         iframe.style.display = 'none';
         iframe.src = deepLink;
         document.body.appendChild(iframe);
-        setTimeout(() => {
-            document.body.removeChild(iframe);
-        }, 1000);
+        setTimeout(() => { document.body.removeChild(iframe); }, 1000);
     </script>
 </body>
-</html>
-  `;
-
+</html>`;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   return res.send(html);
 });
 
+// -------------------- دوال R2 (دون تغيير) --------------------
 const r2Endpoint = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const s3Client = new S3Client({
   region: 'auto',
@@ -320,35 +184,28 @@ function buildPublicUrl(req, objectKey) {
   const cleanedKey = objectKey.replace(/^\/+/, '');
   if (R2_PUBLIC_BASE_URL && R2_PUBLIC_BASE_URL.trim()) {
     const base = R2_PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
-    const encodedKey = cleanedKey
-      .split('/')
-      .map((segment) => encodeURIComponent(segment))
-      .join('/');
+    const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
     return `${base}/${encodedKey}`;
   }
-
   const protocol = req.get('x-forwarded-proto') || req.protocol;
   const host = req.get('x-forwarded-host') || req.get('host');
-  const encodedKey = cleanedKey
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
+  const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
   return `${protocol}://${host}/files/${encodedKey}`;
 }
 
+// -------------------- نقطة الحذف (دون تغيير مع إضافة مسح الكاش) --------------------
 app.post('/delete', express.json(), async (req, res) => {
   try {
     const objectKey = (req.body.objectKey || '').toString().trim();
     if (!objectKey) {
       return res.status(400).json({ error: 'Missing object key.' });
     }
-
     const command = new DeleteObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: objectKey.replace(/^\/+/, ''),
     });
-
     await s3Client.send(command);
+    cache.flushAll();
     return res.status(200).json({ success: true, objectKey });
   } catch (error) {
     console.error('Delete failed:', error);
@@ -359,6 +216,7 @@ app.post('/delete', express.json(), async (req, res) => {
   }
 });
 
+// -------------------- نقطة الرفع (معدلة: إضافة وثيقة جديدة في "files") --------------------
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -372,6 +230,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       ? requestedObjectKey.replace(/^\/+/, '')
       : buildObjectKey(subject, title, req.file.originalname);
 
+    // 1. رفع الملف إلى R2
     const command = new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: objectKey,
@@ -379,11 +238,40 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       ContentType: req.file.mimetype || 'application/octet-stream',
       ACL: 'public-read',
     });
-
     await s3Client.send(command);
-
     const publicUrl = buildPublicUrl(req, objectKey);
+
+    // 2. إضافة وثيقة جديدة في مجموعة "files"
+    const newFileDoc = {
+      subject: subject.trim(),
+      title: title.trim(),
+      name: req.file.originalname,
+      url: publicUrl,
+      storagePath: objectKey,
+      storageType: 'cloudflare-r2',
+      isApproved: false,
+      reviewStatus: 'pending',
+      uploadedByUid: req.body.uploadedByUid || 'anonymous',
+      uploadedByEmail: req.body.uploadedByEmail || '',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    // إضافة الحقول الاختيارية
+    const optionalFields = ['year', 'state', 'specialty', 'fileYear', 'system', 'semester'];
+    for (const field of optionalFields) {
+      if (req.body[field]) {
+        newFileDoc[field] = req.body[field].trim();
+      }
+    }
+
+    const docRef = await db.collection('files').add(newFileDoc);
+
+    // 3. مسح الكاش
+    cache.flushAll();
+
     return res.status(201).json({
+      success: true,
+      id: docRef.id,
       url: publicUrl,
       objectKey,
     });
@@ -395,6 +283,131 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     });
   }
 });
+
+// =================================================================
+//  🚀 نقاط النهاية الجديدة (API) 
+// =================================================================
+
+// 1. جلب قائمة المواد مع عدد الملفات (مع الفلاتر والـ Cache)
+app.get('/api/subjects', async (req, res) => {
+  try {
+    const { year, state, specialty, fileYear } = req.query;
+    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || 'all'}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    let query = db.collection('files').where('isApproved', '==', true);
+    if (year) query = query.where('year', '==', year);
+    if (state) query = query.where('state', '==', state);
+    if (specialty) query = query.where('specialty', '==', specialty);
+    if (fileYear) query = query.where('fileYear', '==', fileYear);
+
+    const snapshot = await query.get();
+    const subjectMap = new Map();
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      const subject = data.subject || 'عام';
+      subjectMap.set(subject, (subjectMap.get(subject) || 0) + 1);
+    });
+
+    const result = Array.from(subjectMap.entries()).map(([subject, count]) => ({
+      subject,
+      count,
+    }));
+
+    cache.set(cacheKey, result);
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching subjects:', error);
+    res.status(500).json({ error: 'Failed to fetch subjects.' });
+  }
+});
+
+// 2. جلب ملفات مادة معينة (مع Pagination والـ Cache)
+app.get('/api/files', async (req, res) => {
+  try {
+    const { subject, year, state, specialty, fileYear, page = 1, limit = 20 } = req.query;
+    if (!subject) {
+      return res.status(400).json({ error: 'Subject is required.' });
+    }
+
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const offset = (pageNum - 1) * limitNum;
+
+    const cacheKey = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || 'all'}_${pageNum}_${limitNum}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    let query = db.collection('files')
+      .where('subject', '==', subject)
+      .where('isApproved', '==', true);
+
+    if (year) query = query.where('year', '==', year);
+    if (state) query = query.where('state', '==', state);
+    if (specialty) query = query.where('specialty', '==', specialty);
+    if (fileYear) query = query.where('fileYear', '==', fileYear);
+
+    // الترتيب حسب الأحدث ثم Pagination باستخدام offset
+    const finalSnapshot = await query
+      .orderBy('createdAt', 'desc')
+      .offset(offset)
+      .limit(limitNum)
+      .get();
+
+    const files = [];
+    finalSnapshot.forEach(doc => {
+      files.push({ id: doc.id, ...doc.data() });
+    });
+
+    cache.set(cacheKey, files);
+    res.json(files);
+  } catch (error) {
+    console.error('Error fetching files:', error);
+    res.status(500).json({ error: 'Failed to fetch files.' });
+  }
+});
+
+// 3. تحديث حالة ملف (مراجعة)
+app.patch('/api/moderate/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { approved, comment, pointsDelta } = req.body;
+
+    if (typeof approved !== 'boolean') {
+      return res.status(400).json({ error: 'Approved status is required (boolean).' });
+    }
+
+    const docRef = db.collection('files').doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    const updateData = {
+      isApproved: approved,
+      reviewStatus: approved ? 'approved' : 'rejected',
+      moderationComment: comment || '',
+      moderatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    await docRef.update(updateData);
+    cache.flushAll();
+
+    res.json({ success: true, id, approved });
+  } catch (error) {
+    console.error('Moderation failed:', error);
+    res.status(500).json({ error: 'Failed to moderate file.' });
+  }
+});
+
+// =================================================================
+//  نقاط عرض الملفات (دون تغيير)
+// =================================================================
 
 app.get('/files', (req, res) => {
   return res.status(200).json({
@@ -411,168 +424,98 @@ function getObjectKeyFromRequest(req) {
 
 async function resolveExistingObjectKey(requestedKey) {
   const exactKey = requestedKey.replace(/^\/+/, '');
-  if (!exactKey) {
-    return null;
-  }
-
+  if (!exactKey) return null;
   try {
-    await s3Client.send(
-      new HeadObjectCommand({
-        Bucket: R2_BUCKET_NAME,
-        Key: exactKey,
-      }),
-    );
+    await s3Client.send(new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: exactKey }));
     return exactKey;
   } catch (error) {
     if (!error || error.$metadata?.httpStatusCode !== 404) {
-      if (error?.name !== 'NoSuchKey' && error?.name !== 'NotFound') {
-        throw error;
-      }
+      if (error?.name !== 'NoSuchKey' && error?.name !== 'NotFound') throw error;
     }
   }
-
   const basename = path.basename(exactKey);
   const listResponse = await s3Client.send(
-    new ListObjectsV2Command({
-      Bucket: R2_BUCKET_NAME,
-      Prefix: `${R2_UPLOAD_PREFIX}/`,
-    }),
+    new ListObjectsV2Command({ Bucket: R2_BUCKET_NAME, Prefix: `${R2_UPLOAD_PREFIX}/` })
   );
-
   const matches = (listResponse.Contents || [])
-    .map((item) => item.Key)
+    .map(item => item.Key)
     .filter(Boolean)
-    .filter((key) => path.basename(key) === basename);
-
-  if (matches.length === 0) {
-    return null;
-  }
-
-  if (matches.length === 1) {
-    return matches[0];
-  }
-
+    .filter(key => path.basename(key) === basename);
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
   const latestMatch = matches
-    .map((key) => {
-      const entry = (listResponse.Contents || []).find((item) => item.Key === key);
-      return {
-        key,
-        lastModified: entry?.LastModified ? new Date(entry.LastModified).getTime() : 0,
-      };
+    .map(key => {
+      const entry = (listResponse.Contents || []).find(item => item.Key === key);
+      return { key, lastModified: entry?.LastModified ? new Date(entry.LastModified).getTime() : 0 };
     })
     .sort((a, b) => b.lastModified - a.lastModified)[0];
-
   return latestMatch?.key || null;
 }
 
 app.get('/files/:objectKey(*)', async (req, res) => {
   try {
     const objectKey = getObjectKeyFromRequest(req);
-    if (!objectKey) {
-      return res.status(400).json({ error: 'Missing object key.' });
-    }
-
+    if (!objectKey) return res.status(400).json({ error: 'Missing object key.' });
     const resolvedKey = await resolveExistingObjectKey(objectKey);
-    if (!resolvedKey) {
-      return res.status(404).json({
-        error: 'File not found.',
-        details: 'The specified key does not exist.',
-      });
-    }
-
-    const command = new GetObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: resolvedKey,
-    });
-
+    if (!resolvedKey) return res.status(404).json({ error: 'File not found.' });
+    const command = new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: resolvedKey });
     const response = await s3Client.send(command);
-    if (!response.Body) {
-      return res.status(404).json({ error: 'File not found.' });
-    }
-
+    if (!response.Body) return res.status(404).json({ error: 'File not found.' });
     res.status(200);
     res.setHeader('Content-Type', response.ContentType || 'application/octet-stream');
     res.setHeader('Cache-Control', 'public, max-age=31536000');
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="${path.basename(resolvedKey)}"`,
-    );
-
+    res.setHeader('Content-Disposition', `inline; filename="${path.basename(resolvedKey)}"`);
     if (typeof response.Body.transformToByteArray === 'function') {
       const bytes = await response.Body.transformToByteArray();
       return res.end(Buffer.from(bytes));
     }
-
     if (typeof response.Body.pipe === 'function') {
       return response.Body.pipe(res);
     }
-
     return res.end(response.Body);
   } catch (error) {
     console.error('File fetch failed:', error);
-    return res.status(500).json({
-      error: 'Failed to fetch file from Cloudflare R2.',
-      details: error.message || String(error),
-    });
+    return res.status(500).json({ error: 'Failed to fetch file from Cloudflare R2.', details: error.message });
   }
 });
 
 app.get('/files/*', async (req, res) => {
   try {
     const objectKey = getObjectKeyFromRequest(req);
-    if (!objectKey) {
-      return res.status(400).json({ error: 'Missing object key.' });
-    }
-
+    if (!objectKey) return res.status(400).json({ error: 'Missing object key.' });
     const resolvedKey = await resolveExistingObjectKey(objectKey);
-    if (!resolvedKey) {
-      return res.status(404).json({
-        error: 'File not found.',
-        details: 'The specified key does not exist.',
-      });
-    }
-
-    const command = new GetObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: resolvedKey,
-    });
-
+    if (!resolvedKey) return res.status(404).json({ error: 'File not found.' });
+    const command = new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: resolvedKey });
     const response = await s3Client.send(command);
-    if (!response.Body) {
-      return res.status(404).json({ error: 'File not found.' });
-    }
-
+    if (!response.Body) return res.status(404).json({ error: 'File not found.' });
     res.status(200);
     res.setHeader('Content-Type', response.ContentType || 'application/octet-stream');
     res.setHeader('Cache-Control', 'public, max-age=31536000');
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="${path.basename(resolvedKey)}"`,
-    );
-
+    res.setHeader('Content-Disposition', `inline; filename="${path.basename(resolvedKey)}"`);
     if (typeof response.Body.transformToByteArray === 'function') {
       const bytes = await response.Body.transformToByteArray();
       return res.end(Buffer.from(bytes));
     }
-
     if (typeof response.Body.pipe === 'function') {
       return response.Body.pipe(res);
     }
-
     return res.end(response.Body);
   } catch (error) {
     console.error('File fetch failed:', error);
-    return res.status(500).json({
-      error: 'Failed to fetch file from Cloudflare R2.',
-      details: error.message || String(error),
-    });
+    return res.status(500).json({ error: 'Failed to fetch file from Cloudflare R2.', details: error.message });
   }
 });
 
+// -------------------- الصفحة الرئيسية --------------------
 app.get('/', (req, res) => {
   res.json({ message: 'Cloudflare R2 upload backend is running.' });
 });
 
+// -------------------- تشغيل الخادم --------------------
 app.listen(PORT, () => {
-  console.log(`Cloudflare R2 backend listening on http://localhost:${PORT}`);
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log('📌 New API endpoints:');
+  console.log('  GET  /api/subjects?year=&state=&specialty=&fileYear=');
+  console.log('  GET  /api/files?subject=...&page=1&limit=20');
+  console.log('  PATCH /api/moderate/:id');
 });
