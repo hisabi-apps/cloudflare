@@ -11,6 +11,7 @@ const {
   HeadObjectCommand,
   ListObjectsV2Command,
   DeleteObjectCommand,
+  CopyObjectCommand,
 } = require('@aws-sdk/client-s3');
 
 const {
@@ -336,6 +337,70 @@ function buildPublicUrl(req, objectKey) {
   return `${protocol}://${host}/files/${encodedKey}`;
 }
 
+function normalizeFilterValue(value) {
+  return (value || '').toString().trim();
+}
+
+function getSubjectFromObjectKey(objectKey) {
+  const normalizedKey = (objectKey || '').toString().trim();
+  if (!normalizedKey) {
+    return '';
+  }
+
+  const segments = normalizedKey.split('/').filter(Boolean);
+  return segments.length >= 2 ? segments[1] : '';
+}
+
+function matchesBackendFilters(objectMetadata, filters) {
+  const subject = normalizeFilterValue(filters.subject);
+  const year = normalizeFilterValue(filters.year);
+  const state = normalizeFilterValue(filters.state);
+  const specialty = normalizeFilterValue(filters.specialty);
+  const fileYearFrom = normalizeFilterValue(filters.fileYearFrom);
+  const fileYearTo = normalizeFilterValue(filters.fileYearTo);
+  const reviewStatus = normalizeFilterValue(filters.reviewStatus);
+
+  const objectSubject = normalizeFilterValue(
+    objectMetadata.subject || getSubjectFromObjectKey(objectMetadata.objectKey),
+  );
+  const objectYear = normalizeFilterValue(objectMetadata.year);
+  const objectState = normalizeFilterValue(objectMetadata.state);
+  const objectSpecialty = normalizeFilterValue(objectMetadata.specialty);
+  const objectFileYear = normalizeFilterValue(objectMetadata.fileYear);
+  const objectReviewStatus = normalizeFilterValue(objectMetadata.reviewStatus);
+
+  if (subject && objectSubject.toLowerCase() !== subject.toLowerCase()) {
+    return false;
+  }
+
+  if (year && objectYear !== year) {
+    return false;
+  }
+
+  if (state && objectState !== state) {
+    return false;
+  }
+
+  if (specialty && objectSpecialty !== specialty) {
+    return false;
+  }
+
+  if (fileYearFrom && objectFileYear && Number(objectFileYear) < Number(fileYearFrom)) {
+    return false;
+  }
+
+  if (fileYearTo && objectFileYear && Number(objectFileYear) > Number(fileYearTo)) {
+    return false;
+  }
+
+  const effectiveReviewStatus = reviewStatus || 'approved';
+  if (objectReviewStatus && objectReviewStatus !== effectiveReviewStatus) {
+    return false;
+  }
+
+  return true;
+}
+
 app.post('/delete', express.json(), async (req, res) => {
   try {
     const objectKey = (req.body.objectKey || '').toString().trim();
@@ -372,12 +437,25 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       ? requestedObjectKey.replace(/^\/+/, '')
       : buildObjectKey(subject, title, req.file.originalname);
 
+    const metadata = Object.fromEntries(
+      Object.entries({
+        subject: (req.body.subject || 'عام').toString().trim(),
+        title: (req.body.title || path.parse(req.file.originalname).name).toString().trim(),
+        year: (req.body.year || '').toString().trim(),
+        state: (req.body.state || '').toString().trim(),
+        specialty: (req.body.specialty || '').toString().trim(),
+        fileYear: (req.body.fileYear || '').toString().trim(),
+        reviewStatus: (req.body.reviewStatus || 'pending').toString().trim(),
+      }).filter(([, value]) => value),
+    );
+
     const command = new PutObjectCommand({
       Bucket: R2_BUCKET_NAME,
       Key: objectKey,
       Body: req.file.buffer,
       ContentType: req.file.mimetype || 'application/octet-stream',
       ACL: 'public-read',
+      Metadata: metadata,
     });
 
     await s3Client.send(command);
@@ -569,42 +647,137 @@ app.get('/files/*', async (req, res) => {
   }
 });
 
+app.patch('/api/files/metadata', express.json(), async (req, res) => {
+  try {
+    const objectKey = (req.body.objectKey || '').toString().trim();
+    const reviewStatus = (req.body.reviewStatus || '').toString().trim();
+    if (!objectKey || !reviewStatus) {
+      return res.status(400).json({ error: 'Missing objectKey or reviewStatus.' });
+    }
+
+    const headCommand = new HeadObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: objectKey.replace(/^\/+/, ''),
+    });
+    const headResponse = await s3Client.send(headCommand);
+    const currentMetadata = headResponse.Metadata || {};
+    const newMetadata = {
+      ...currentMetadata,
+      reviewStatus,
+    };
+
+    const copyCommand = new CopyObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      CopySource: `${R2_BUCKET_NAME}/${objectKey.replace(/^\/+/, '')}`,
+      Key: objectKey.replace(/^\/+/, ''),
+      Metadata: newMetadata,
+      MetadataDirective: 'REPLACE',
+      ContentType: headResponse.ContentType,
+    });
+
+    await s3Client.send(copyCommand);
+    return res.status(200).json({ success: true, objectKey, reviewStatus });
+  } catch (error) {
+    console.error('Failed to update metadata:', error);
+    return res.status(500).json({ error: 'Failed to update metadata' });
+  }
+});
+
 app.get('/api/files', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
     const cursor = req.query.cursor || undefined;
+    const filters = {
+      subject: normalizeFilterValue(req.query.subject),
+      year: normalizeFilterValue(req.query.year),
+      state: normalizeFilterValue(req.query.state),
+      specialty: normalizeFilterValue(req.query.specialty),
+      fileYearFrom: normalizeFilterValue(req.query.fileYearFrom),
+      fileYearTo: normalizeFilterValue(req.query.fileYearTo),
+      reviewStatus: normalizeFilterValue(req.query.reviewStatus),
+    };
 
-    const command = new ListObjectsV2Command({
-      Bucket: R2_BUCKET_NAME,
-      Prefix: `${R2_UPLOAD_PREFIX}/`,
-      MaxKeys: limit,
-      ContinuationToken: cursor,
-    });
+    const normalizedSubject = filters.subject.replace(/^\/+|\/+$/g, '');
+    const prefix = normalizedSubject
+      ? `${R2_UPLOAD_PREFIX}/${normalizedSubject}/`
+      : `${R2_UPLOAD_PREFIX}/`;
 
-    const response = await s3Client.send(command);
+    const data = [];
+    let nextCursor = cursor;
+    let hasMore = false;
 
-    const data = (response.Contents || [])
-      .filter((item) => item.Key)
-      .map((item) => {
+    while (data.length < limit) {
+      const command = new ListObjectsV2Command({
+        Bucket: R2_BUCKET_NAME,
+        Prefix: prefix,
+        MaxKeys: Math.min(limit, 100),
+        ContinuationToken: nextCursor,
+      });
+
+      const response = await s3Client.send(command);
+      const pageItems = response.Contents || [];
+
+      for (const item of pageItems) {
+        if (!item.Key) {
+          continue;
+        }
+
+        const headResponse = await s3Client.send(
+          new HeadObjectCommand({
+            Bucket: R2_BUCKET_NAME,
+            Key: item.Key,
+          }),
+        );
+
+        const metadata = {
+          ...(headResponse.Metadata || {}),
+          objectKey: item.Key,
+        };
+
+        if (!matchesBackendFilters(metadata, filters)) {
+          continue;
+        }
+
         const encodedKey = item.Key.split('/').map((seg) => encodeURIComponent(seg)).join('/');
         const publicUrl = R2_PUBLIC_BASE_URL
           ? `${R2_PUBLIC_BASE_URL.replace(/\/+$/, '')}/${encodedKey}`
           : null;
 
-        return {
+        data.push({
           key: item.Key,
           url: publicUrl,
           size: item.Size,
           lastModified: item.LastModified,
           name: item.Key.split('/').pop(),
-        };
-      });
+          subject: metadata.subject || getSubjectFromObjectKey(item.Key),
+          year: metadata.year || '',
+          state: metadata.state || '',
+          specialty: metadata.specialty || '',
+          fileYear: metadata.fileYear || '',
+        });
+
+        if (data.length >= limit) {
+          break;
+        }
+      }
+
+      if (response.IsTruncated && response.NextContinuationToken) {
+        nextCursor = response.NextContinuationToken;
+        hasMore = true;
+        if (data.length >= limit) {
+          break;
+        }
+        continue;
+      }
+
+      break;
+    }
 
     res.status(200).json({
       success: true,
-      data,
-      nextCursor: response.NextContinuationToken || null,
-      hasMore: response.IsTruncated || false,
+      data: data.slice(0, limit),
+      nextCursor: hasMore && nextCursor ? nextCursor : null,
+      hasMore,
     });
   } catch (error) {
     console.error('Failed to list files:', error);
