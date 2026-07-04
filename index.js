@@ -569,6 +569,49 @@ app.get('/files/*', async (req, res) => {
   }
 });
 
+app.get('/api/files', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const cursor = req.query.cursor || undefined;
+
+    const command = new ListObjectsV2Command({
+      Bucket: R2_BUCKET_NAME,
+      Prefix: `${R2_UPLOAD_PREFIX}/`,
+      MaxKeys: limit,
+      ContinuationToken: cursor,
+    });
+
+    const response = await s3Client.send(command);
+
+    const data = (response.Contents || [])
+      .filter((item) => item.Key)
+      .map((item) => {
+        const encodedKey = item.Key.split('/').map((seg) => encodeURIComponent(seg)).join('/');
+        const publicUrl = R2_PUBLIC_BASE_URL
+          ? `${R2_PUBLIC_BASE_URL.replace(/\/+$/, '')}/${encodedKey}`
+          : null;
+
+        return {
+          key: item.Key,
+          url: publicUrl,
+          size: item.Size,
+          lastModified: item.LastModified,
+          name: item.Key.split('/').pop(),
+        };
+      });
+
+    res.status(200).json({
+      success: true,
+      data,
+      nextCursor: response.NextContinuationToken || null,
+      hasMore: response.IsTruncated || false,
+    });
+  } catch (error) {
+    console.error('Failed to list files:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/', (req, res) => {
   res.json({ message: 'Cloudflare R2 upload backend is running.' });
 });
