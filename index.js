@@ -743,17 +743,20 @@ app.get('/api/files', async (req, res) => {
           ? `${R2_PUBLIC_BASE_URL.replace(/\/+$/, '')}/${encodedKey}`
           : null;
 
+        const extractedTitle = metadata.title || path.basename(item.Key);
         data.push({
           key: item.Key,
           url: publicUrl,
           size: item.Size,
           lastModified: item.LastModified,
-          name: item.Key.split('/').pop(),
+          name: extractedTitle,
+          title: extractedTitle,
           subject: metadata.subject || getSubjectFromObjectKey(item.Key),
           year: metadata.year || '',
           state: metadata.state || '',
           specialty: metadata.specialty || '',
           fileYear: metadata.fileYear || '',
+          reviewStatus: metadata.reviewStatus || 'approved',
         });
 
         if (data.length >= limit) {
