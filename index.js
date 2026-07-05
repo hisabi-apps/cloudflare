@@ -307,8 +307,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // 1. جلب قائمة المواد مع عدد الملفات (مع الفلاتر والـ Cache)
 app.get('/api/subjects', async (req, res) => {
   try {
-    const { year, state, specialty, fileYearFrom, fileYearTo } = req.query;
-    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
+    const { year, state, specialty, fileYear } = req.query;
+    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || 'all'}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
@@ -318,8 +318,7 @@ app.get('/api/subjects', async (req, res) => {
     if (year) query = query.where('year', '==', year);
     if (state) query = query.where('state', '==', state);
     if (specialty) query = query.where('specialty', '==', specialty);
-    if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
-    if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
+    if (fileYear) query = query.where('fileYear', '==', fileYear);
 
     const snapshot = await query.get();
     const subjectMap = new Map();
@@ -345,7 +344,7 @@ app.get('/api/subjects', async (req, res) => {
 // 2. جلب ملفات مادة معينة (مع Pagination والـ Cache)
 app.get('/api/files', async (req, res) => {
   try {
-    const { subject, year, state, specialty, fileYearFrom, fileYearTo, page = 1, limit = 20 } = req.query;
+    const { subject, year, state, specialty, fileYear, page = 1, limit = 20 } = req.query;
     if (!subject) {
       return res.status(400).json({ error: 'Subject is required.' });
     }
@@ -354,7 +353,7 @@ app.get('/api/files', async (req, res) => {
     const limitNum = parseInt(limit, 10);
     const offset = (pageNum - 1) * limitNum;
 
-    const cacheKey = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYearFrom || 'all'}_${fileYearTo || 'all'}_${pageNum}_${limitNum}`;
+    const cacheKey = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || 'all'}_${pageNum}_${limitNum}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
@@ -367,8 +366,7 @@ app.get('/api/files', async (req, res) => {
     if (year) query = query.where('year', '==', year);
     if (state) query = query.where('state', '==', state);
     if (specialty) query = query.where('specialty', '==', specialty);
-    if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
-    if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
+    if (fileYear) query = query.where('fileYear', '==', fileYear);
 
     // الترتيب حسب الأحدث ثم Pagination باستخدام offset
     const finalSnapshot = await query
