@@ -307,8 +307,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // 1. جلب قائمة المواد مع عدد الملفات (مع الفلاتر والـ Cache)
 app.get('/api/subjects', async (req, res) => {
   try {
-    const { year, state, specialty, fileYear } = req.query;
-    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || 'all'}`;
+    const { year, state, specialty, fileYear, fileYearFrom, fileYearTo } = req.query;
+    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
@@ -319,18 +319,30 @@ app.get('/api/subjects', async (req, res) => {
     if (state) query = query.where('state', '==', state);
     if (specialty) query = query.where('specialty', '==', specialty);
     if (fileYear) query = query.where('fileYear', '==', fileYear);
+    if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
+    if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
 
     const snapshot = await query.get();
     const subjectMap = new Map();
     snapshot.forEach(doc => {
       const data = doc.data();
       const subject = data.subject || 'عام';
-      subjectMap.set(subject, (subjectMap.get(subject) || 0) + 1);
+      const specialty = (data.specialty || '').trim();
+      if (!subjectMap.has(subject)) {
+        subjectMap.set(subject, { count: 0, specialties: new Set() });
+      }
+
+      const subjectEntry = subjectMap.get(subject);
+      subjectEntry.count += 1;
+      if (specialty) {
+        subjectEntry.specialties.add(specialty);
+      }
     });
 
-    const result = Array.from(subjectMap.entries()).map(([subject, count]) => ({
+    const result = Array.from(subjectMap.entries()).map(([subject, info]) => ({
       subject,
-      count,
+      count: info.count,
+      specialties: Array.from(info.specialties).sort(),
     }));
 
     cache.set(cacheKey, result);
@@ -344,7 +356,7 @@ app.get('/api/subjects', async (req, res) => {
 // 2. جلب ملفات مادة معينة (مع Pagination والـ Cache)
 app.get('/api/files', async (req, res) => {
   try {
-    const { subject, year, state, specialty, fileYear, page = 1, limit = 20 } = req.query;
+    const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 20 } = req.query;
     if (!subject) {
       return res.status(400).json({ error: 'Subject is required.' });
     }
@@ -353,7 +365,7 @@ app.get('/api/files', async (req, res) => {
     const limitNum = parseInt(limit, 10);
     const offset = (pageNum - 1) * limitNum;
 
-    const cacheKey = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || 'all'}_${pageNum}_${limitNum}`;
+    const cacheKey = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}_${pageNum}_${limitNum}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
@@ -367,6 +379,8 @@ app.get('/api/files', async (req, res) => {
     if (state) query = query.where('state', '==', state);
     if (specialty) query = query.where('specialty', '==', specialty);
     if (fileYear) query = query.where('fileYear', '==', fileYear);
+    if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
+    if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
 
     // الترتيب حسب الأحدث ثم Pagination باستخدام offset
     const finalSnapshot = await query
