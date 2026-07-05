@@ -496,9 +496,10 @@ app.patch('/api/moderate/:id', async (req, res) => {
         if (userDoc.exists) {
           const userData = userDoc.data() || {};
           console.log(`👤 User found: ${userId}, has deviceTokens: ${!!userData.deviceTokens}`);
-          
+          const pointsEarned = approved && typeof pointsDelta === 'number' ? pointsDelta : 0;
+          const pointsText = approved && pointsEarned > 0 ? ` +${pointsEarned} نقطة${pointsEarned == 1 ? '' : 'ات'}` : '';
           const notificationMessage = approved
-            ? `تم قبول ملفك "${fileTitle}" ✅`
+            ? `تم قبول ملفك "${fileTitle}" ✅${pointsText}`
             : `تم رفض ملفك "${fileTitle}" ❌`;
           
           const notificationData = {
@@ -509,6 +510,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
             fileId: id,
             fileTitle: fileTitle,
             approved: approved,
+            pointsDelta: pointsEarned,
             comment: comment || '',
             // Use `createdAt` and `isRead` to match the Flutter client expectations
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
