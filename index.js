@@ -51,6 +51,164 @@ const upload = multer({ storage: multer.memoryStorage() });
 const app = express();
 app.use(express.json());
 
+function isAdminUserData(userData, email) {
+  if (!userData) {
+    return false;
+  }
+
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  if (
+    normalizedEmail.includes('admin') ||
+    normalizedEmail.includes('owner') ||
+    normalizedEmail.includes('moderator')
+  ) {
+    return true;
+  }
+
+  const roleValue = userData.role;
+  if (typeof roleValue === 'string') {
+    const normalizedRole = roleValue.trim().toLowerCase();
+    if (
+      normalizedRole.includes('admin') ||
+      normalizedRole.includes('owner') ||
+      normalizedRole.includes('moderator')
+    ) {
+      return true;
+    }
+  }
+
+  if (typeof userData.isAdmin === 'boolean' && userData.isAdmin) {
+    return true;
+  }
+  if (
+    typeof userData.isAdmin === 'string' &&
+    userData.isAdmin.trim().toLowerCase() === 'true'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+app.post('/api/admin/send-fcm-notification', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    if (!authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized request.' });
+    }
+
+    const idToken = authHeader.split(' ')[1];
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    if (!decodedToken?.uid) {
+      return res.status(401).json({ error: 'Unauthorized request.' });
+    }
+
+    const senderUid = decodedToken.uid;
+    const senderEmail = decodedToken.email || '';
+    const senderRef = db.collection('users').doc(senderUid);
+    const senderDoc = await senderRef.get();
+    if (!senderDoc.exists || !isAdminUserData(senderDoc.data(), senderEmail)) {
+      return res.status(403).json({ error: 'Not authorized to send notifications.' });
+    }
+
+    const { title, body, recipients, data } = req.body;
+    if (typeof title !== 'string' || title.trim() === '') {
+      return res.status(400).json({ error: 'Notification title is required.' });
+    }
+    if (typeof body !== 'string' || body.trim() === '') {
+      return res.status(400).json({ error: 'Notification body is required.' });
+    }
+    if (!Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: 'Recipients are required.' });
+    }
+
+    const uniqueRecipientUids = [...new Set(recipients
+      .map((recipient) => String(recipient).trim())
+      .filter((recipient) => recipient.length > 0))];
+
+    let totalTokens = 0;
+    let totalSuccess = 0;
+    const details = [];
+
+    for (const recipientUid of uniqueRecipientUids) {
+      const userRef = db.collection('users').doc(recipientUid);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        details.push({ recipientUid, status: 'missing_user' });
+        continue;
+      }
+
+      const userData = userDoc.data() || {};
+      const deviceTokens = Array.isArray(userData.deviceTokens)
+        ? userData.deviceTokens.filter(
+            (token) => typeof token === 'string' && token.trim() !== '',
+          )
+        : [];
+
+      if (deviceTokens.length === 0) {
+        details.push({ recipientUid, status: 'no_tokens' });
+        continue;
+      }
+
+      try {
+        const multicast = {
+          tokens: deviceTokens,
+          notification: {
+            title: title.trim(),
+            body: body.trim(),
+          },
+          data: typeof data === 'object' && data !== null
+            ? Object.fromEntries(
+                Object.entries(data).map(([key, value]) => [
+                  String(key),
+                  value == null ? '' : String(value),
+                ]),
+              )
+            : {},
+        };
+
+        const response = await admin.messaging().sendMulticast(multicast);
+        totalTokens += deviceTokens.length;
+        totalSuccess += response.successCount;
+        details.push({
+          recipientUid,
+          successCount: response.successCount,
+          failureCount: response.failureCount,
+        });
+
+        response.responses.forEach((resp, index) => {
+          if (resp.success) {
+            console.log(
+              `✅ Admin FCM sent to ${recipientUid} token ${index + 1}/${deviceTokens.length}`,
+            );
+          } else {
+            console.log(
+              `❌ Admin FCM failed for ${recipientUid} token ${index + 1}: ${resp.error?.message}`,
+            );
+          }
+        });
+      } catch (sendError) {
+        console.error(
+          `❌ Failed to send admin FCM for user ${recipientUid}:`,
+          sendError?.message || sendError,
+        );
+        details.push({ recipientUid, status: 'send_error', error: String(sendError) });
+      }
+    }
+
+    return res.json({
+      success: true,
+      recipients: uniqueRecipientUids.length,
+      totalTokens,
+      totalSuccess,
+      details,
+    });
+  } catch (error) {
+    console.error('Admin FCM send failed:', error);
+    return res.status(500).json({ error: 'Failed to send admin FCM notification.' });
+  }
+});
+
 // -------------------- نظام التخزين المؤقت (Cache) --------------------
 const cache = new NodeCache({ stdTTL: 120, checkperiod: 130 });
 
