@@ -477,7 +477,11 @@ app.patch('/api/moderate/:id', async (req, res) => {
             : `تم رفض ملفك "${fileTitle}" ❌`;
           
           const notificationData = {
+            // `type` is a general category used elsewhere; `notificationType` is
+            // used by the Flutter UI to pick the icon/appearance (e.g. 'approved')
             type: 'file_moderation',
+            notificationType: approved ? 'approved' : 'rejected',
+            category: 'info',
             title: approved ? 'ملف مقبول' : 'ملف مرفوض',
             message: notificationMessage,
             fileId: id,
