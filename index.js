@@ -379,8 +379,13 @@ app.get('/api/files', async (req, res) => {
     if (state) query = query.where('state', '==', state);
     if (specialty) query = query.where('specialty', '==', specialty);
     if (fileYear) query = query.where('fileYear', '==', fileYear);
+    const hasFileYearRange = fileYearFrom || fileYearTo;
     if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
     if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
+
+    if (hasFileYearRange) {
+      query = query.orderBy('fileYear');
+    }
 
     // الترتيب حسب الأحدث ثم Pagination باستخدام offset
     const finalSnapshot = await query
