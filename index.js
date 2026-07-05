@@ -481,10 +481,14 @@ app.patch('/api/moderate/:id', async (req, res) => {
             title: approved ? 'ملف مقبول' : 'ملف مرفوض',
             message: notificationMessage,
             fileId: id,
+            fileTitle: fileTitle,
             approved: approved,
             comment: comment || '',
+            // Use `createdAt` and `isRead` to match the Flutter client expectations
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            // keep legacy timestamp too for compatibility
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            read: false,
+            isRead: false,
           };
 
           // حفظ الإشعار في Firestore
