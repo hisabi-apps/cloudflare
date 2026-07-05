@@ -522,14 +522,7 @@ app.listen(PORT, () => {
 // -------------------- جلب الملفات المعلقة للمراجعة --------------------
 app.get('/api/pending', async (req, res) => {
   try {
-    // مفتاح الكاش الخاص بالملفات المعلقة (نخزنها لمدة دقيقة واحدة فقط لأنها تتغير كثيراً)
-    const cacheKey = 'pending_files';
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
-
-    // استعلام لجلب جميع الملفات التي حالتها 'pending'
+    // نهمل الكاش تمامًا لجلب البيانات الطازجة مباشرة من Firestore
     const snapshot = await db.collection('files')
       .where('reviewStatus', '==', 'pending')
       .orderBy('createdAt', 'desc')
@@ -538,13 +531,11 @@ app.get('/api/pending', async (req, res) => {
     const pendingFiles = [];
     snapshot.forEach(doc => {
       pendingFiles.push({
-        id: doc.id, // ✅ مهم: نرسل الـ id مع البيانات
+        id: doc.id,
         ...doc.data(),
       });
     });
 
-    // تخزين النتيجة في الكاش لمدة 60 ثانية
-    cache.set(cacheKey, pendingFiles, 300);
     res.json(pendingFiles);
   } catch (error) {
     console.error('Error fetching pending files:', error);
