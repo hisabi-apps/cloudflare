@@ -480,6 +480,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
             type: 'file_moderation',
             title: approved ? 'ملف مقبول' : 'ملف مرفوض',
             message: notificationMessage,
+            secondaryText: comment || '',
             fileId: id,
             fileTitle: fileTitle,
             approved: approved,
