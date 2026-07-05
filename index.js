@@ -445,6 +445,10 @@ app.patch('/api/moderate/:id', async (req, res) => {
       return res.status(404).json({ error: 'File not found.' });
     }
 
+    const fileData = doc.data();
+    const userId = fileData?.uploadedBy;
+    const fileTitle = fileData?.title || 'ملف';
+
     const updateData = {
       isApproved: approved,
       reviewStatus: approved ? 'approved' : 'rejected',
@@ -455,12 +459,68 @@ app.patch('/api/moderate/:id', async (req, res) => {
     await docRef.update(updateData);
     cache.flushAll();
 
+    // إرسال إشعار للمستخدم عند الموافقة أو الرفض
+    if (userId) {
+      try {
+        const userRef = db.collection('users').doc(userId);
+        const userDoc = await userRef.get();
+        
+        if (userDoc.exists) {
+          const notificationMessage = approved
+            ? `تم قبول ملفك "${fileTitle}" ✅`
+            : `تم رفض ملفك "${fileTitle}" ❌`;
+          
+          const notificationData = {
+            type: 'file_moderation',
+            title: approved ? 'ملف مقبول' : 'ملف مرفوض',
+            message: notificationMessage,
+            fileId: id,
+            approved: approved,
+            comment: comment || '',
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            read: false,
+          };
+
+          // حفظ الإشعار في Firestore
+          const notificationsRef = db.collection('users').doc(userId).collection('notifications');
+          await notificationsRef.add(notificationData);
+
+          // محاولة إرسال FCM notification إذا كان هناك device token
+          const deviceTokens = userDoc.data()?.deviceTokens || [];
+          if (Array.isArray(deviceTokens) && deviceTokens.length > 0) {
+            const messages = deviceTokens.map(token => ({
+              token,
+              notification: {
+                title: approved ? 'ملف مقبول' : 'ملف مرفوض',
+                body: notificationMessage,
+              },
+              data: {
+                fileId: id,
+                approved: approved.toString(),
+              },
+            }));
+
+            await Promise.all(
+              messages.map(msg =>
+                admin.messaging().send(msg)
+                  .catch(err => console.log(`FCM send failed for token: ${err.message}`))
+              )
+            );
+          }
+        }
+      } catch (notifError) {
+        console.error('Failed to send notification:', notifError.message);
+        // لا نوقف العملية إذا فشل الإشعار
+      }
+    }
+
     res.json({ success: true, id, approved });
   } catch (error) {
     console.error('Moderation failed:', error);
     res.status(500).json({ error: 'Failed to moderate file.' });
   }
 });
+
 
 // =================================================================
 //  نقاط عرض الملفات (دون تغيير)
