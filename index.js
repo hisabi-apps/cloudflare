@@ -446,8 +446,10 @@ app.patch('/api/moderate/:id', async (req, res) => {
     }
 
     const fileData = doc.data();
-    const userId = fileData?.uploadedBy;
+    const userId = fileData?.uploadedByUid; // ✅ استخدام uploadedByUid (المفتاح الصحيح)
     const fileTitle = fileData?.title || 'ملف';
+
+    console.log(`📝 Moderating file ${id}: approved=${approved}, userId=${userId}`);
 
     const updateData = {
       isApproved: approved,
@@ -462,10 +464,14 @@ app.patch('/api/moderate/:id', async (req, res) => {
     // إرسال إشعار للمستخدم عند الموافقة أو الرفض
     if (userId) {
       try {
+        console.log(`🔔 Getting user document for ${userId}`);
         const userRef = db.collection('users').doc(userId);
         const userDoc = await userRef.get();
         
         if (userDoc.exists) {
+          const userData = userDoc.data() || {};
+          console.log(`👤 User found: ${userId}, has deviceTokens: ${!!userData.deviceTokens}`);
+          
           const notificationMessage = approved
             ? `تم قبول ملفك "${fileTitle}" ✅`
             : `تم رفض ملفك "${fileTitle}" ❌`;
@@ -483,10 +489,13 @@ app.patch('/api/moderate/:id', async (req, res) => {
 
           // حفظ الإشعار في Firestore
           const notificationsRef = db.collection('users').doc(userId).collection('notifications');
-          await notificationsRef.add(notificationData);
+          const notifDocRef = await notificationsRef.add(notificationData);
+          console.log(`✅ Notification saved in Firestore: ${notifDocRef.id}`);
 
           // محاولة إرسال FCM notification إذا كان هناك device token
-          const deviceTokens = userDoc.data()?.deviceTokens || [];
+          const deviceTokens = userData.deviceTokens || [];
+          console.log(`📱 Device tokens count: ${deviceTokens.length}`);
+          
           if (Array.isArray(deviceTokens) && deviceTokens.length > 0) {
             const messages = deviceTokens.map(token => ({
               token,
@@ -500,18 +509,31 @@ app.patch('/api/moderate/:id', async (req, res) => {
               },
             }));
 
-            await Promise.all(
+            const fcmResults = await Promise.allSettled(
               messages.map(msg =>
                 admin.messaging().send(msg)
-                  .catch(err => console.log(`FCM send failed for token: ${err.message}`))
               )
             );
+
+            fcmResults.forEach((result, index) => {
+              if (result.status === 'fulfilled') {
+                console.log(`✅ FCM sent for token ${index + 1}/${messages.length}`);
+              } else {
+                console.log(`❌ FCM failed for token ${index + 1}: ${result.reason?.message}`);
+              }
+            });
+          } else {
+            console.log('⚠️ No device tokens found for user');
           }
+        } else {
+          console.log(`❌ User document not found: ${userId}`);
         }
       } catch (notifError) {
-        console.error('Failed to send notification:', notifError.message);
+        console.error('❌ Failed to send notification:', notifError.message);
         // لا نوقف العملية إذا فشل الإشعار
       }
+    } else {
+      console.log('❌ No userId found in file data');
     }
 
     res.json({ success: true, id, approved });
@@ -520,6 +542,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to moderate file.' });
   }
 });
+
 
 
 // =================================================================
