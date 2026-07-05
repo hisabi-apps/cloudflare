@@ -525,7 +525,6 @@ app.get('/api/pending', async (req, res) => {
     // نهمل الكاش تمامًا لجلب البيانات الطازجة مباشرة من Firestore
     const snapshot = await db.collection('files')
       .where('reviewStatus', '==', 'pending')
-      .orderBy('createdAt', 'desc')
       .get();
 
     const pendingFiles = [];
@@ -534,6 +533,12 @@ app.get('/api/pending', async (req, res) => {
         id: doc.id,
         ...doc.data(),
       });
+    });
+
+    pendingFiles.sort((a, b) => {
+      const aCreated = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+      const bCreated = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+      return bCreated - aCreated;
     });
 
     res.json(pendingFiles);
