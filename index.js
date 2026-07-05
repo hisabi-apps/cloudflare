@@ -461,6 +461,31 @@ app.patch('/api/moderate/:id', async (req, res) => {
     await docRef.update(updateData);
     cache.flushAll();
 
+    // تحديث نقاط المستخدم عند قبول الملف
+    if (approved && typeof pointsDelta === 'number' && pointsDelta != 0 && userId) {
+      try {
+        const userRef = db.collection('users').doc(userId);
+        await userRef.set(
+          {
+            points: admin.firestore.FieldValue.increment(pointsDelta),
+            lastPointsUpdate: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+
+        const userStatsRef = userRef.collection('stats').doc('profile');
+        await userStatsRef.set(
+          {
+            points: admin.firestore.FieldValue.increment(pointsDelta),
+          },
+          { merge: true },
+        );
+        console.log(`✅ Added ${pointsDelta} points for user ${userId}`);
+      } catch (pointsError) {
+        console.error(`⚠️ Failed to update points for user ${userId}:`, pointsError.message);
+      }
+    }
+
     // إرسال إشعار للمستخدم عند الموافقة أو الرفض
     if (userId) {
       try {
