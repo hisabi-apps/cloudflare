@@ -225,6 +225,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     const subject = req.body.subject || 'عام';
     const title = req.body.title || path.parse(req.file.originalname).name;
+    const uploadedByUid = (req.body.uploadedByUid || 'anonymous').toString();
     const requestedObjectKey = (req.body.objectKey || '').toString().trim();
     const objectKey = requestedObjectKey
       ? requestedObjectKey.replace(/^\/+/, '')
@@ -241,7 +242,22 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     await s3Client.send(command);
     const publicUrl = buildPublicUrl(req, objectKey);
 
-    // 2. إضافة وثيقة جديدة في مجموعة "files"
+    // 2. التحقق من صلاحية الرفع للأدمن
+    let isAdmin = false;
+    if (uploadedByUid !== 'anonymous') {
+      const userDoc = await db.collection('users').doc(uploadedByUid).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data() || {};
+        const canModerate =
+          userData.canModerateExercises === true ||
+          ['admin', 'moderator', 'owner'].includes(
+            (userData.role || '').toString().trim().toLowerCase(),
+          );
+        isAdmin = canModerate === true;
+      }
+    }
+
+    // 3. إضافة وثيقة جديدة في مجموعة "files"
     const newFileDoc = {
       subject: subject.trim(),
       title: title.trim(),
@@ -249,9 +265,9 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       url: publicUrl,
       storagePath: objectKey,
       storageType: 'cloudflare-r2',
-      isApproved: false,
-      reviewStatus: 'pending',
-      uploadedByUid: req.body.uploadedByUid || 'anonymous',
+      isApproved: isAdmin,
+      reviewStatus: isAdmin ? 'approved' : 'pending',
+      uploadedByUid,
       uploadedByEmail: req.body.uploadedByEmail || '',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
