@@ -162,6 +162,14 @@ const s3Client = new S3Client({
   },
 });
 
+function normalizeText(value) {
+  return value
+    .toString()
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
 function sanitizeSegment(value) {
   return value
     .toString()
@@ -276,7 +284,11 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     const optionalFields = ['year', 'state', 'specialty', 'fileYear', 'system', 'semester'];
     for (const field of optionalFields) {
       if (req.body[field]) {
-        newFileDoc[field] = req.body[field].trim();
+        const trimmedValue = req.body[field].trim();
+        newFileDoc[field] = trimmedValue;
+        if (field === 'specialty') {
+          newFileDoc.specialtyNormalized = normalizeText(trimmedValue);
+        }
       }
     }
 
@@ -317,17 +329,22 @@ app.get('/api/subjects', async (req, res) => {
     let query = db.collection('files').where('isApproved', '==', true);
     if (year) query = query.where('year', '==', year);
     if (state) query = query.where('state', '==', state);
-    if (specialty) query = query.where('specialty', '==', specialty);
     if (fileYear) query = query.where('fileYear', '==', fileYear);
     if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
     if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
 
     const snapshot = await query.get();
+    const normalizedSpecialty = specialty ? normalizeText(specialty) : null;
     const subjectMap = new Map();
     snapshot.forEach(doc => {
       const data = doc.data();
+      const specialtyValue = (data.specialty || '').toString();
+      if (normalizedSpecialty && normalizeText(specialtyValue) !== normalizedSpecialty) {
+        return;
+      }
+
       const subject = data.subject || 'عام';
-      const specialty = (data.specialty || '').trim();
+      const specialty = specialtyValue.trim();
       if (!subjectMap.has(subject)) {
         subjectMap.set(subject, { count: 0, specialties: new Set() });
       }
@@ -377,7 +394,6 @@ app.get('/api/files', async (req, res) => {
 
     if (year) query = query.where('year', '==', year);
     if (state) query = query.where('state', '==', state);
-    if (specialty) query = query.where('specialty', '==', specialty);
     if (fileYear) query = query.where('fileYear', '==', fileYear);
     const hasFileYearRange = fileYearFrom || fileYearTo;
     if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
@@ -388,15 +404,21 @@ app.get('/api/files', async (req, res) => {
     }
 
     // الترتيب حسب الأحدث ثم Pagination باستخدام offset
-    const finalSnapshot = await query
+    const snapshot = await query
       .orderBy('createdAt', 'desc')
       .offset(offset)
       .limit(limitNum)
       .get();
 
+    const normalizedSpecialty = specialty ? normalizeText(specialty) : null;
     const files = [];
-    finalSnapshot.forEach(doc => {
-      files.push({ id: doc.id, ...doc.data() });
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      const specialtyValue = (data.specialty || '').toString();
+      if (normalizedSpecialty && normalizeText(specialtyValue) !== normalizedSpecialty) {
+        return;
+      }
+      files.push({ id: doc.id, ...data });
     });
 
     cache.set(cacheKey, files);
@@ -602,7 +624,11 @@ app.patch('/api/files/:id', async (req, res) => {
     if (subject !== undefined) updateData.subject = subject.trim();
     if (year !== undefined) updateData.year = year.trim();
     if (state !== undefined) updateData.state = state.trim();
-    if (specialty !== undefined) updateData.specialty = specialty.trim();
+    if (specialty !== undefined) {
+      const trimmedSpecialty = specialty.trim();
+      updateData.specialty = trimmedSpecialty;
+      updateData.specialtyNormalized = normalizeText(trimmedSpecialty);
+    }
     if (fileYear !== undefined) updateData.fileYear = fileYear.trim();
 
     // 3. تنفيذ التحديث في Firestore
