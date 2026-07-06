@@ -393,6 +393,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     const title = req.body.title || path.parse(req.file.originalname).name;
     const uploadedByUid = (req.body.uploadedByUid || 'anonymous').toString();
     const requestedObjectKey = (req.body.objectKey || '').toString().trim();
+    const skipFileRecord =
+      req.body.skipFileRecord === 'true' ||
+      req.body.skipFileRecord === true ||
+      req.body.skipFileRecord === '1';
     const objectKey = requestedObjectKey
       ? requestedObjectKey.replace(/^\/+/, '')
       : buildObjectKey(subject, title, req.file.originalname);
@@ -408,58 +412,62 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     await s3Client.send(command);
     const publicUrl = buildPublicUrl(req, objectKey);
 
-    // 2. التحقق من صلاحية الرفع للأدمن
-    let isAdmin = false;
-    if (uploadedByUid !== 'anonymous') {
-      const userDoc = await db.collection('users').doc(uploadedByUid).get();
-      if (userDoc.exists) {
-        const userData = userDoc.data() || {};
-        const canModerate =
-          userData.canModerateExercises === true ||
-          ['admin', 'moderator', 'owner'].includes(
-            (userData.role || '').toString().trim().toLowerCase(),
-          );
-        isAdmin = canModerate === true;
-      }
-    }
-
-    // 3. إضافة وثيقة جديدة في مجموعة "files"
-    const newFileDoc = {
-      subject: subject.trim(),
-      title: title.trim(),
-      name: req.file.originalname,
-      url: publicUrl,
-      storagePath: objectKey,
-      storageType: 'cloudflare-r2',
-      isApproved: isAdmin,
-      reviewStatus: isAdmin ? 'approved' : 'pending',
-      uploadedByUid,
-      uploadedByEmail: req.body.uploadedByEmail || '',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
-
-    // إضافة الحقول الاختيارية
-    const optionalFields = ['year', 'state', 'specialty', 'fileYear', 'system', 'semester'];
-    for (const field of optionalFields) {
-      if (req.body[field]) {
-        const trimmedValue = req.body[field].trim();
-        newFileDoc[field] = trimmedValue;
-        if (field === 'specialty') {
-          newFileDoc.specialtyNormalized = normalizeText(trimmedValue);
+    let docRef = null;
+    if (!skipFileRecord) {
+      // 2. التحقق من صلاحية الرفع للأدمن
+      let isAdmin = false;
+      if (uploadedByUid !== 'anonymous') {
+        const userDoc = await db.collection('users').doc(uploadedByUid).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data() || {};
+          const canModerate =
+            userData.canModerateExercises === true ||
+            ['admin', 'moderator', 'owner'].includes(
+              (userData.role || '').toString().trim().toLowerCase(),
+            );
+          isAdmin = canModerate === true;
         }
       }
+
+      // 3. إضافة وثيقة جديدة في مجموعة "files"
+      const newFileDoc = {
+        subject: subject.trim(),
+        title: title.trim(),
+        name: req.file.originalname,
+        url: publicUrl,
+        storagePath: objectKey,
+        storageType: 'cloudflare-r2',
+        isApproved: isAdmin,
+        reviewStatus: isAdmin ? 'approved' : 'pending',
+        uploadedByUid,
+        uploadedByEmail: req.body.uploadedByEmail || '',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // إضافة الحقول الاختيارية
+      const optionalFields = ['year', 'state', 'specialty', 'fileYear', 'system', 'semester'];
+      for (const field of optionalFields) {
+        if (req.body[field]) {
+          const trimmedValue = req.body[field].trim();
+          newFileDoc[field] = trimmedValue;
+          if (field === 'specialty') {
+            newFileDoc.specialtyNormalized = normalizeText(trimmedValue);
+          }
+        }
+      }
+
+      docRef = await db.collection('files').add(newFileDoc);
     }
 
-    const docRef = await db.collection('files').add(newFileDoc);
-
-    // 3. مسح الكاش
+    // 4. مسح الكاش
     cache.flushAll();
 
     return res.status(201).json({
       success: true,
-      id: docRef.id,
+      id: docRef?.id || null,
       url: publicUrl,
       objectKey,
+      skippedFileRecord: skipFileRecord,
     });
   } catch (error) {
     console.error('Upload failed:', error);
