@@ -42,8 +42,6 @@ const {
   PORT = 10000,
 } = process.env;
 
-const ANDROID_NOTIFICATION_CHANNEL_ID = 'hisabi_univ_default_channel';
-
 if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET_NAME) {
   console.error('❌ Missing Cloudflare R2 environment variables. See .env.example.');
   process.exit(1);
@@ -158,20 +156,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           notification: {
             title: title.trim(),
             body: body.trim(),
-          },
-          android: {
-            priority: 'high',
-            notification: {
-              channelId: ANDROID_NOTIFICATION_CHANNEL_ID,
-              sound: 'default',
-            },
-          },
-          apns: {
-            payload: {
-              aps: {
-                sound: 'default',
-              },
-            },
           },
           data: typeof data === 'object' && data !== null
             ? Object.fromEntries(
@@ -716,20 +700,6 @@ app.patch('/api/moderate/:id', async (req, res) => {
               notification: {
                 title: approved ? 'ملف مقبول' : 'ملف مرفوض',
                 body: notificationMessage,
-              },
-              android: {
-                priority: 'high',
-                notification: {
-                  channelId: ANDROID_NOTIFICATION_CHANNEL_ID,
-                  sound: 'default',
-                },
-              },
-              apns: {
-                payload: {
-                  aps: {
-                    sound: 'default',
-                  },
-                },
               },
               data: {
                 fileId: id,
