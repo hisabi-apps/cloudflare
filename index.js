@@ -156,6 +156,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           notification: {
             title: title.trim(),
             body: body.trim(),
+            sound: 'default',
           },
           data: typeof data === 'object' && data !== null
             ? Object.fromEntries(
@@ -165,6 +166,17 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
                 ]),
               )
             : {},
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: 'high_importance_channel',
+            },
+          },
+          apns: {
+            headers: {
+              'apns-priority': '10',
+            },
+          },
         };
 
         const response = await admin.messaging().sendMulticast(multicast);
@@ -700,10 +712,22 @@ app.patch('/api/moderate/:id', async (req, res) => {
               notification: {
                 title: approved ? 'ملف مقبول' : 'ملف مرفوض',
                 body: notificationMessage,
+                sound: 'default',
               },
               data: {
                 fileId: id,
                 approved: approved.toString(),
+              },
+              android: {
+                priority: 'high',
+                notification: {
+                  channelId: 'high_importance_channel',
+                },
+              },
+              apns: {
+                headers: {
+                  'apns-priority': '10',
+                },
               },
             }));
 
