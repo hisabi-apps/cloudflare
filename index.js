@@ -131,6 +131,8 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     }
 
     const { title, body, recipients, data } = req.body;
+    console.log(`📨 Received FCM request: title="${title}", body="${body}", recipients=${recipients.length}`);
+    
     if (typeof title !== 'string' || title.trim() === '') {
       return res.status(400).json({ error: 'Notification title is required.' });
     }
@@ -168,6 +170,27 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       }
 
       try {
+        // بيانات افتراضية يجب أن تكون موجودة دائماً
+        const defaultData = {
+          notificationType: 'admin_message',
+          category: 'general',
+          target: 'all',
+          sentBatchId: recipientUid,
+        };
+
+        // دمج البيانات المرسلة مع الافتراضية
+        const finalData = typeof data === 'object' && data !== null
+          ? { ...defaultData, ...data }
+          : defaultData;
+
+        // تحويل كل القيم إلى strings (متطلب Firebase)
+        const sanitizedData = Object.fromEntries(
+          Object.entries(finalData).map(([key, value]) => [
+            String(key),
+            value == null ? '' : String(value),
+          ]),
+        );
+
         const multicast = {
           tokens: deviceTokens,
           notification: {
@@ -175,14 +198,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
             body: body.trim(),
             sound: 'default',
           },
-          data: typeof data === 'object' && data !== null
-            ? Object.fromEntries(
-                Object.entries(data).map(([key, value]) => [
-                  String(key),
-                  value == null ? '' : String(value),
-                ]),
-              )
-            : {},
+          data: sanitizedData,
           android: {
             priority: 'high',
             notification: {
@@ -200,6 +216,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         };
 
         console.log(`📤 Sending multicast to ${deviceTokens.length} tokens for ${recipientUid}`);
+        console.log(`📋 Payload: ${JSON.stringify(multicast)}`);
         const response = await admin.messaging().sendMulticast(multicast);
         totalTokens += deviceTokens.length;
         totalSuccess += response.successCount;
@@ -231,6 +248,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       }
     }
 
+    console.log(`✅ Admin FCM completed: totalTokens=${totalTokens}, totalSuccess=${totalSuccess}`);
     return res.json({
       success: true,
       recipients: uniqueRecipientUids.length,
