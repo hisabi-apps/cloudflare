@@ -36,6 +36,8 @@ try {
   credential: admin.credential.cert(serviceAccount), // ✅ استخدم admin.credential.cert
 });
   console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
+
+  const db = admin.firestore();
 } catch (error) {
   console.error('❌ Failed to initialize Firebase Admin:', error.message);
   process.exit(1);
