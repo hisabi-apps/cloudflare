@@ -30,18 +30,18 @@ try {
   process.exit(1);
 }
 
-let db; // ✅ أعلن db خارج الـ try
-
 try {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+  // استخدام cert مباشرة بدلاً من admin.credential.cert
+ admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount), // ✅ استخدم admin.credential.cert
+});
   console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
 
-  db = admin.firestore(); // ✅ عرّف db هنا، لكنها أصبحت متاحة في النطاق الأعلى
+  const db = admin.firestore();
 } catch (error) {
   console.error('❌ Failed to initialize Firebase Admin:', error.message);
   process.exit(1);
+
 }
 // -------------------- المتغيرات البيئية الأساسية --------------------
 const {
