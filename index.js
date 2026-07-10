@@ -170,18 +170,19 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       }
 
       try {
+        // استخراج البيانات المرسلة من طلب الكلاينت
+        const clientData = data || {};
+        
         // بيانات افتراضية يجب أن تكون موجودة دائماً
         const defaultData = {
-          notificationType: 'admin_message',
-          category: 'general',
-          target: 'all',
-          sentBatchId: recipientUid,
+          notificationType: clientData.notificationType || 'admin_message',
+          category: clientData.category || 'general',
+          target: clientData.target || 'all',
+          sentBatchId: clientData.sentBatchId || recipientUid,
         };
 
         // دمج البيانات المرسلة مع الافتراضية
-        const finalData = typeof data === 'object' && data !== null
-          ? { ...defaultData, ...data }
-          : defaultData;
+        const finalData = { ...defaultData, ...clientData };
 
         // تحويل كل القيم إلى strings (متطلب Firebase)
         const sanitizedData = Object.fromEntries(
