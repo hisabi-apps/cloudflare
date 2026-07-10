@@ -268,6 +268,11 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           sendError?.message || sendError,
         );
         details.push({ recipientUid, status: 'send_error', error: String(sendError) });
+        console.error('❌ Unhandled error in send-fcm-notification:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error', 
+      details: error.message 
+    });
       }
     }
 
