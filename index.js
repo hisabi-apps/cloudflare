@@ -51,6 +51,25 @@ const upload = multer({ storage: multer.memoryStorage() });
 const app = express();
 app.use(express.json());
 
+function normalizeDeviceTokens(userData) {
+  const tokens = [];
+  if (Array.isArray(userData?.deviceTokens)) {
+    userData.deviceTokens
+      .filter((token) => typeof token === 'string' && token.trim() !== '')
+      .forEach((token) => tokens.push(token.trim()));
+  }
+
+  const fallbackTokenFields = ['fcmToken', 'messagingToken', 'token'];
+  fallbackTokenFields.forEach((fieldName) => {
+    const value = userData?.[fieldName];
+    if (typeof value === 'string' && value.trim() !== '') {
+      tokens.push(value.trim());
+    }
+  });
+
+  return [...new Set(tokens)];
+}
+
 function isAdminUserData(userData, email) {
   if (!userData) {
     return false;
@@ -139,11 +158,9 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       }
 
       const userData = userDoc.data() || {};
-      const deviceTokens = Array.isArray(userData.deviceTokens)
-        ? userData.deviceTokens.filter(
-            (token) => typeof token === 'string' && token.trim() !== '',
-          )
-        : [];
+      const deviceTokens = normalizeDeviceTokens(userData);
+
+      console.log(`📱 User ${recipientUid} has ${deviceTokens.length} tokens`);
 
       if (deviceTokens.length === 0) {
         details.push({ recipientUid, status: 'no_tokens' });
@@ -170,8 +187,16 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
             priority: 'high',
             notification: {
               channelId: 'high_importance_channel',
+              sound: 'default',
+              defaultSound: true,
             },
           },
+          apns: {
+            headers: {
+              'apns-priority': '10',
+            },
+          },
+          contentAvailable: true,
           apns: {
             headers: {
               'apns-priority': '10',
@@ -703,7 +728,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
           console.log(`✅ Notification saved in Firestore: ${notifDocRef.id}`);
 
           // محاولة إرسال FCM notification إذا كان هناك device token
-          const deviceTokens = userData.deviceTokens || [];
+          const deviceTokens = normalizeDeviceTokens(userData);
           console.log(`📱 Device tokens count: ${deviceTokens.length}`);
           
           if (Array.isArray(deviceTokens) && deviceTokens.length > 0) {
@@ -722,6 +747,8 @@ app.patch('/api/moderate/:id', async (req, res) => {
                 priority: 'high',
                 notification: {
                   channelId: 'high_importance_channel',
+                  sound: 'default',
+                  defaultSound: true,
                 },
               },
               apns: {
@@ -729,6 +756,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
                   'apns-priority': '10',
                 },
               },
+              contentAvailable: true,
             }));
 
             const fcmResults = await Promise.allSettled(
