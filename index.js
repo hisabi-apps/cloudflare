@@ -32,9 +32,9 @@ try {
 
 try {
   // استخدام cert مباشرة بدلاً من admin.credential.cert
-  admin.initializeApp({
-    credential: cert(serviceAccount),
-  });
+ admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount), // ✅ استخدم admin.credential.cert
+});
   console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
 } catch (error) {
   console.error('❌ Failed to initialize Firebase Admin:', error.message);
