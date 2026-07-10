@@ -197,13 +197,9 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
             },
           },
           contentAvailable: true,
-          apns: {
-            headers: {
-              'apns-priority': '10',
-            },
-          },
         };
 
+        console.log(`📤 Sending multicast to ${deviceTokens.length} tokens for ${recipientUid}`);
         const response = await admin.messaging().sendMulticast(multicast);
         totalTokens += deviceTokens.length;
         totalSuccess += response.successCount;
@@ -213,14 +209,16 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           failureCount: response.failureCount,
         });
 
+        console.log(`📊 Multicast result: ${response.successCount} succeeded, ${response.failureCount} failed`);
+
         response.responses.forEach((resp, index) => {
           if (resp.success) {
             console.log(
-              `✅ Admin FCM sent to ${recipientUid} token ${index + 1}/${deviceTokens.length}`,
+              `✅ Admin FCM sent to ${recipientUid} token ${index + 1}/${deviceTokens.length}: ${resp.messageId}`,
             );
           } else {
             console.log(
-              `❌ Admin FCM failed for ${recipientUid} token ${index + 1}: ${resp.error?.message}`,
+              `❌ Admin FCM failed for ${recipientUid} token ${index + 1}: ${resp.error?.code} - ${resp.error?.message}`,
             );
           }
         });
