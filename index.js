@@ -53,20 +53,30 @@ app.use(express.json());
 
 function normalizeDeviceTokens(userData) {
   const tokens = [];
+  
+  // Debug: what fields exist
+  const availableFields = Object.keys(userData || {});
+  console.log(`🔍 Available fields in userData: ${availableFields.join(', ')}`);
+  
   if (Array.isArray(userData?.deviceTokens)) {
+    console.log(`✅ Found deviceTokens array with ${userData.deviceTokens.length} items`);
     userData.deviceTokens
       .filter((token) => typeof token === 'string' && token.trim() !== '')
       .forEach((token) => tokens.push(token.trim()));
+  } else {
+    console.log(`❌ deviceTokens is not an array. Type: ${typeof userData?.deviceTokens}, Value: ${userData?.deviceTokens}`);
   }
 
   const fallbackTokenFields = ['fcmToken', 'messagingToken', 'token'];
   fallbackTokenFields.forEach((fieldName) => {
     const value = userData?.[fieldName];
     if (typeof value === 'string' && value.trim() !== '') {
+      console.log(`✅ Found fallback token in field "${fieldName}": ${value.substring(0, 20)}...`);
       tokens.push(value.trim());
     }
   });
 
+  console.log(`📊 Total tokens extracted: ${tokens.length}`);
   return [...new Set(tokens)];
 }
 
