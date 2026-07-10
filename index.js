@@ -30,18 +30,18 @@ try {
   process.exit(1);
 }
 
-try {
-  // استخدام cert مباشرة بدلاً من admin.credential.cert
- admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount), // ✅ استخدم admin.credential.cert
-});
-  console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
+let db; // ✅ أعلن المتغير هنا (خارج الـ try)
 
-  const db = admin.firestore();
+try {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+  console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
+  
+  db = admin.firestore(); // ✅ عرّف المتغير هنا (دون const)
 } catch (error) {
   console.error('❌ Failed to initialize Firebase Admin:', error.message);
   process.exit(1);
-
 }
 // -------------------- المتغيرات البيئية الأساسية --------------------
 const {
