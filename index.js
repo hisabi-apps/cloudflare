@@ -10,8 +10,7 @@ const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObj
 
 // -------------------- Firebase Admin SDK --------------------
 const admin = require('firebase-admin');
-// استيراد دالة cert مباشرةً (للإصدار 14+)
-const { cert } = require('firebase-admin/credential');
+
 
 // -------------------- تحقق من وجود مفتاح الخدمة --------------------
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
