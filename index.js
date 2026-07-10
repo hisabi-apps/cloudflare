@@ -10,7 +10,8 @@ const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObj
 
 // -------------------- Firebase Admin SDK --------------------
 const admin = require('firebase-admin');
-
+// استيراد دالة cert مباشرةً (للإصدار 14+)
+const { cert } = require('firebase-admin/credential');
 
 // -------------------- تحقق من وجود مفتاح الخدمة --------------------
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -31,13 +32,15 @@ try {
 }
 
 try {
+  // استخدام cert مباشرة بدلاً من admin.credential.cert
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
+    credential: cert(serviceAccount),
   });
   console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
 } catch (error) {
   console.error('❌ Failed to initialize Firebase Admin:', error.message);
   process.exit(1);
+
 }
 // -------------------- المتغيرات البيئية الأساسية --------------------
 const {
