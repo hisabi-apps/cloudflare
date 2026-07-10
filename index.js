@@ -11,26 +11,34 @@ const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObj
 // -------------------- Firebase Admin SDK --------------------
 const admin = require('firebase-admin');
 
+
 // -------------------- تحقق من وجود مفتاح الخدمة --------------------
-if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
-  console.error('❌ Missing FIREBASE_SERVICE_ACCOUNT environment variable.');
-  console.error('Please set it to the JSON string of your service account key.');
+const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+
+if (!serviceAccountJson) {
+  console.error('❌ FIREBASE_SERVICE_ACCOUNT environment variable is not set.');
+  process.exit(1);
+}
+
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(serviceAccountJson);
+  console.log('✅ Service account JSON parsed successfully.');
+} catch (parseError) {
+  console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT JSON:', parseError.message);
+  console.error('   Raw value (first 100 chars):', serviceAccountJson.substring(0, 100));
   process.exit(1);
 }
 
 try {
-  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
   });
-  console.log('✅ Firebase Admin initialized successfully.');
+  console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
 } catch (error) {
   console.error('❌ Failed to initialize Firebase Admin:', error.message);
   process.exit(1);
 }
-
-const db = admin.firestore();
-
 // -------------------- المتغيرات البيئية الأساسية --------------------
 const {
   R2_ACCOUNT_ID,
