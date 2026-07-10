@@ -158,14 +158,18 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
             body: body.trim(),
             sound: 'default',
           },
-          data: typeof data === 'object' && data !== null
-            ? Object.fromEntries(
-                Object.entries(data).map(([key, value]) => [
-                  String(key),
-                  value == null ? '' : String(value),
-                ]),
-              )
-            : {},
+          data: {
+            ...(typeof data === 'object' && data !== null
+              ? Object.fromEntries(
+                  Object.entries(data).map(([key, value]) => [
+                    String(key),
+                    value == null ? '' : String(value),
+                  ]),
+                )
+              : {}),
+            title: title.trim(),
+            body: body.trim(),
+          },
           android: {
             priority: 'high',
             notification: {
@@ -717,6 +721,8 @@ app.patch('/api/moderate/:id', async (req, res) => {
               data: {
                 fileId: id,
                 approved: approved.toString(),
+                title: approved ? 'ملف مقبول' : 'ملف مرفوض',
+                body: notificationMessage,
               },
               android: {
                 priority: 'high',
