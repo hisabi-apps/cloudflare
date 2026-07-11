@@ -274,6 +274,12 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
       ...(notificationIconUrl ? { notificationIconUrl } : {}),
     };
+
+    const topLevelNotificationData = {
+      ...(attachmentImageUrl ? { attachmentImageUrl } : {}),
+      ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
+      ...(notificationIconUrl ? { notificationIconUrl } : {}),
+    };
     const sanitizedData = Object.fromEntries(
       Object.entries(finalData).map(([key, value]) => [
         String(key),
@@ -286,7 +292,10 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         title: title.trim(),
         body: body.trim(),
       },
-      data: sanitizedData,
+      data: {
+        ...sanitizedData,
+        ...topLevelNotificationData,
+      },
       android: {
         priority: 'high',
         notification: {
