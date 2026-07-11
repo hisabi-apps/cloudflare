@@ -152,8 +152,10 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to send notifications.' });
     }
 
-    const { title, body, recipients, data } = req.body;
-    console.log(`📨 Received FCM request: title="${title}", body="${body}", recipients=${recipients.length}`);
+    const { title, body, recipients, topic, data } = req.body;
+    const topicName = typeof topic === 'string' ? topic.trim() : '';
+    const hasTopicTarget = topicName.length > 0;
+    console.log(`📨 Received FCM request: title="${title}", body="${body}", topic="${topicName}", recipients=${Array.isArray(recipients) ? recipients.length : 0}`);
     
     if (typeof title !== 'string' || title.trim() === '') {
       return res.status(400).json({ error: 'Notification title is required.' });
@@ -161,11 +163,11 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     if (typeof body !== 'string' || body.trim() === '') {
       return res.status(400).json({ error: 'Notification body is required.' });
     }
-    if (!Array.isArray(recipients) || recipients.length === 0) {
-      return res.status(400).json({ error: 'Recipients are required.' });
+    if (!hasTopicTarget && (!Array.isArray(recipients) || recipients.length === 0)) {
+      return res.status(400).json({ error: 'Recipients are required unless topic is provided.' });
     }
 
-    const uniqueRecipientUids = [...new Set(recipients
+    const uniqueRecipientUids = hasTopicTarget ? [] : [...new Set(recipients
       .map((recipient) => String(recipient).trim())
       .filter((recipient) => recipient.length > 0))];
 
@@ -173,106 +175,127 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     let totalSuccess = 0;
     const details = [];
 
-    for (const recipientUid of uniqueRecipientUids) {
-      const userRef = db.collection('users').doc(recipientUid);
-      const userDoc = await userRef.get();
-      if (!userDoc.exists) {
-        details.push({ recipientUid, status: 'missing_user' });
-        continue;
-      }
+    const clientData = data || {};
+    const defaultData = {
+      notificationType: clientData.notificationType || 'admin_message',
+      category: clientData.category || 'general',
+      target: clientData.target || 'all',
+      sentBatchId: clientData.sentBatchId || '',
+      topicName: clientData.topicName || '',
+    };
 
-      const userData = userDoc.data() || {};
-      const deviceTokens = normalizeDeviceTokens(userData);
+    const finalData = { ...defaultData, ...clientData };
+    const sanitizedData = Object.fromEntries(
+      Object.entries(finalData).map(([key, value]) => [
+        String(key),
+        value == null ? '' : String(value),
+      ]),
+    );
 
-      console.log(`📱 User ${recipientUid} has ${deviceTokens.length} tokens`);
+    const messagePayload = {
+      notification: {
+        title: title.trim(),
+        body: body.trim(),
+        sound: 'default',
+      },
+      data: sanitizedData,
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'high_importance_channel',
+          sound: 'default',
+          defaultSound: true,
+        },
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+        },
+      },
+      contentAvailable: true,
+    };
 
-      if (deviceTokens.length === 0) {
-        details.push({ recipientUid, status: 'no_tokens' });
-        continue;
-      }
-
+    if (hasTopicTarget) {
       try {
-        // استخراج البيانات المرسلة من طلب الكلاينت
-        const clientData = data || {};
-        
-        // بيانات افتراضية يجب أن تكون موجودة دائماً
-        const defaultData = {
-          notificationType: clientData.notificationType || 'admin_message',
-          category: clientData.category || 'general',
-          target: clientData.target || 'all',
-          sentBatchId: clientData.sentBatchId || recipientUid,
+        const topicMessage = {
+          ...messagePayload,
+          topic: topicName,
         };
 
-        // دمج البيانات المرسلة مع الافتراضية
-        const finalData = { ...defaultData, ...clientData };
+        console.log(`📤 Sending topic message to '${topicName}'`);
+        console.log(`📋 Payload: ${JSON.stringify(topicMessage)}`);
 
-        // تحويل كل القيم إلى strings (متطلب Firebase)
-        const sanitizedData = Object.fromEntries(
-          Object.entries(finalData).map(([key, value]) => [
-            String(key),
-            value == null ? '' : String(value),
-          ]),
-        );
-
-        const multicast = {
-          tokens: deviceTokens,
-          notification: {
-            title: title.trim(),
-            body: body.trim(),
-            sound: 'default',
-          },
-          data: sanitizedData,
-          android: {
-            priority: 'high',
-            notification: {
-              channelId: 'high_importance_channel',
-              sound: 'default',
-              defaultSound: true,
-            },
-          },
-          apns: {
-            headers: {
-              'apns-priority': '10',
-            },
-          },
-          contentAvailable: true,
-        };
-
-        console.log(`📤 Sending multicast to ${deviceTokens.length} tokens for ${recipientUid}`);
-        console.log(`📋 Payload: ${JSON.stringify(multicast)}`);
-        const response = await admin.messaging().sendMulticast(multicast);
-        totalTokens += deviceTokens.length;
-        totalSuccess += response.successCount;
+        const response = await admin.messaging().send(topicMessage);
+        totalSuccess += 1;
         details.push({
-          recipientUid,
-          successCount: response.successCount,
-          failureCount: response.failureCount,
+          topic: topicName,
+          success: true,
+          messageId: response,
         });
-
-        console.log(`📊 Multicast result: ${response.successCount} succeeded, ${response.failureCount} failed`);
-
-        response.responses.forEach((resp, index) => {
-          if (resp.success) {
-            console.log(
-              `✅ Admin FCM sent to ${recipientUid} token ${index + 1}/${deviceTokens.length}: ${resp.messageId}`,
-            );
-          } else {
-            console.log(
-              `❌ Admin FCM failed for ${recipientUid} token ${index + 1}: ${resp.error?.code} - ${resp.error?.message}`,
-            );
-          }
-        });
+        console.log(`✅ Topic FCM sent to '${topicName}': ${response}`);
       } catch (sendError) {
         console.error(
-          `❌ Failed to send admin FCM for user ${recipientUid}:`,
+          `❌ Failed to send topic FCM to '${topicName}':`,
           sendError?.message || sendError,
         );
-        details.push({ recipientUid, status: 'send_error', error: String(sendError) });
-        console.error('❌ Unhandled error in send-fcm-notification:', error);
-    return res.status(500).json({ 
-      error: 'Internal server error', 
-      details: error.message 
-    });
+        details.push({ topic: topicName, status: 'send_error', error: String(sendError) });
+      }
+    } else {
+      for (const recipientUid of uniqueRecipientUids) {
+        const userRef = db.collection('users').doc(recipientUid);
+        const userDoc = await userRef.get();
+        if (!userDoc.exists) {
+          details.push({ recipientUid, status: 'missing_user' });
+          continue;
+        }
+
+        const userData = userDoc.data() || {};
+        const deviceTokens = normalizeDeviceTokens(userData);
+
+        console.log(`📱 User ${recipientUid} has ${deviceTokens.length} tokens`);
+
+        if (deviceTokens.length === 0) {
+          details.push({ recipientUid, status: 'no_tokens' });
+          continue;
+        }
+
+        try {
+          const multicast = {
+            ...messagePayload,
+            tokens: deviceTokens,
+          };
+
+          console.log(`📤 Sending multicast to ${deviceTokens.length} tokens for ${recipientUid}`);
+          console.log(`📋 Payload: ${JSON.stringify(multicast)}`);
+          const response = await admin.messaging().sendMulticast(multicast);
+          totalTokens += deviceTokens.length;
+          totalSuccess += response.successCount;
+          details.push({
+            recipientUid,
+            successCount: response.successCount,
+            failureCount: response.failureCount,
+          });
+
+          console.log(`📊 Multicast result: ${response.successCount} succeeded, ${response.failureCount} failed`);
+
+          response.responses.forEach((resp, index) => {
+            if (resp.success) {
+              console.log(
+                `✅ Admin FCM sent to ${recipientUid} token ${index + 1}/${deviceTokens.length}: ${resp.messageId}`,
+              );
+            } else {
+              console.log(
+                `❌ Admin FCM failed for ${recipientUid} token ${index + 1}: ${resp.error?.code} - ${resp.error?.message}`,
+              );
+            }
+          });
+        } catch (sendError) {
+          console.error(
+            `❌ Failed to send admin FCM for user ${recipientUid}:`,
+            sendError?.message || sendError,
+          );
+          details.push({ recipientUid, status: 'send_error', error: String(sendError) });
+        }
       }
     }
 
@@ -280,6 +303,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     return res.json({
       success: true,
       recipients: uniqueRecipientUids.length,
+      topic: topicName,
       totalTokens,
       totalSuccess,
       details,
