@@ -291,7 +291,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       notification: {
         title: title.trim(),
         body: body.trim(),
-        image: attachmentImageUrl ? { image: attachmentImageUrl } : null,
+        ...(attachmentImageUrl ? { imageurl: attachmentImageUrl } : {}),
       },
       data: {
         ...sanitizedData,
@@ -303,7 +303,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           channelId: 'high_importance_channel',
           sound: 'default',
           defaultSound: true,
-          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+          ...(attachmentImageUrl ? { imageurl: attachmentImageUrl } : {}),
         },
       },
       apns: {
