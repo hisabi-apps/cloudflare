@@ -114,21 +114,36 @@ async function sendFcmViaHttp(message) {
   const client = await auth.getClient();
   const accessToken = await client.getAccessToken();
   const token = accessToken?.token || accessToken;
-  const projectId = serviceAccount.project_id;
+  const projectId = serviceAccount.project_id || admin.app().options.projectId || process.env.FIREBASE_PROJECT_ID;
+
+  if (!projectId) {
+    throw new Error('Unable to determine Firebase project ID for HTTP FCM request.');
+  }
+
   const url = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
+  console.log(`🔧 HTTP FCM URL: ${url}`);
 
-  const response = await axios.post(
-    url,
-    { message },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
+  try {
+    const response = await axios.post(
+      url,
+      { message },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       },
-    },
-  );
+    );
 
-  return response.data;
+    return response.data;
+  } catch (httpError) {
+    console.error('❌ sendFcmViaHttp error response:', {
+      message: httpError?.message,
+      status: httpError?.response?.status,
+      data: httpError?.response?.data,
+    });
+    throw httpError;
+  }
 }
 
 async function sendFcmWithFallback(message, label) {
@@ -136,13 +151,21 @@ async function sendFcmWithFallback(message, label) {
     const response = await admin.messaging().send(message);
     return { channel: 'admin', response };
   } catch (adminError) {
-    console.error(`⚠️ admin.messaging().send failed for ${label}:`, adminError?.message || adminError);
+    console.error(`⚠️ admin.messaging().send failed for ${label}:`, {
+      message: adminError?.message,
+      code: adminError?.code,
+      details: adminError?.details || adminError?.errorInfo,
+    });
     try {
       const httpResponse = await sendFcmViaHttp(message);
       console.log(`✅ HTTP FCM fallback succeeded for ${label}`);
       return { channel: 'http', response: httpResponse };
     } catch (httpError) {
-      console.error(`❌ HTTP FCM fallback failed for ${label}:`, httpError?.message || httpError);
+      console.error(`❌ HTTP FCM fallback failed for ${label}:`, {
+        message: httpError?.message,
+        status: httpError?.response?.status,
+        data: httpError?.response?.data,
+      });
       throw httpError;
     }
   }
