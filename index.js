@@ -40,6 +40,8 @@ try {
     projectId: serviceAccount.project_id,
   });
   console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
+  console.log('🔐 Service account email:', serviceAccount.client_email);
+  console.log('📦 Firebase project ID from admin app:', admin.app().options.projectId);
   
   db = admin.firestore(); // ✅ عرّف المتغير هنا (دون const)
 } catch (error) {
