@@ -6,6 +6,8 @@ require('dotenv').config({
 const express = require('express');
 const multer = require('multer');
 const NodeCache = require('node-cache');
+const axios = require('axios');
+const { GoogleAuth } = require('google-auth-library');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 // -------------------- Firebase Admin SDK --------------------
@@ -96,11 +98,53 @@ function normalizeDeviceTokens(userData) {
 async function removeInvalidDeviceToken(userId, token) {
   try {
     await db.collection('users').doc(userId).update({
-      deviceTokens: admin.firestore.FieldValue.arrayRemove([token]),
+      deviceTokens: admin.firestore.FieldValue.arrayRemove(token),
     });
     console.log(`🗑️ Removed invalid device token from user ${userId}`);
   } catch (e) {
     console.error(`⚠️ Failed to remove invalid token for user ${userId}:`, e?.message || e);
+  }
+}
+
+async function sendFcmViaHttp(message) {
+  const auth = new GoogleAuth({
+    credentials: serviceAccount,
+    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  });
+  const client = await auth.getClient();
+  const accessToken = await client.getAccessToken();
+  const token = accessToken?.token || accessToken;
+  const projectId = serviceAccount.project_id;
+  const url = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
+
+  const response = await axios.post(
+    url,
+    { message },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    },
+  );
+
+  return response.data;
+}
+
+async function sendFcmWithFallback(message, label) {
+  try {
+    const response = await admin.messaging().send(message);
+    return { channel: 'admin', response };
+  } catch (adminError) {
+    console.error(`⚠️ admin.messaging().send failed for ${label}:`, adminError?.message || adminError);
+    try {
+      const httpResponse = await sendFcmViaHttp(message);
+      console.log(`✅ HTTP FCM fallback succeeded for ${label}`);
+      return { channel: 'http', response: httpResponse };
+    } catch (httpError) {
+      console.error(`❌ HTTP FCM fallback failed for ${label}:`, httpError?.message || httpError);
+      throw httpError;
+    }
   }
 }
 
@@ -241,14 +285,15 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         console.log(`📤 Sending topic message to '${topicName}'`);
         console.log(`📋 Payload: ${JSON.stringify(topicMessage)}`);
 
-        const response = await admin.messaging().send(topicMessage);
+        const fallbackResult = await sendFcmWithFallback(topicMessage, `topic:${topicName}`);
         totalSuccess += 1;
         details.push({
           topic: topicName,
           success: true,
-          messageId: response,
+          messageId: fallbackResult.response,
+          channel: fallbackResult.channel,
         });
-        console.log(`✅ Topic FCM sent to '${topicName}': ${response}`);
+        console.log(`✅ Topic FCM sent to '${topicName}' via ${fallbackResult.channel}: ${fallbackResult.response}`);
       } catch (sendError) {
         console.error(
           `❌ Failed to send topic FCM to '${topicName}':`,
@@ -277,59 +322,60 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 
         try {
           let userSuccessCount = 0;
-        let userFailureCount = 0;
+          let userFailureCount = 0;
 
-        for (const token of deviceTokens) {
-          const singleMessage = {
-            ...messagePayload,
-            token,
-          };
-
-          try {
-            console.log(`📤 Sending FCM to token for ${recipientUid}`);
-            const response = await admin.messaging().send(singleMessage);
-            totalTokens += 1;
-            totalSuccess += 1;
-            userSuccessCount += 1;
-            details.push({
-              recipientUid,
+          for (const token of deviceTokens) {
+            const singleMessage = {
+              ...messagePayload,
               token,
-              success: true,
-              messageId: response,
-            });
-            console.log(`✅ Admin FCM sent to ${recipientUid} token: ${response}`);
-          } catch (sendError) {
-            userFailureCount += 1;
-            const errorMessage = String(sendError?.message || sendError);
-            console.error(
-              `❌ Failed to send admin FCM for user ${recipientUid} token:`,
-              errorMessage,
-            );
-            details.push({
-              recipientUid,
-              token,
-              status: 'send_error',
-              error: errorMessage,
-            });
+            };
 
-            if (
-              errorMessage.includes('Requested entity was not found') ||
-              errorMessage.includes('not a valid FCM registration token') ||
-              errorMessage.includes('registration token is not a valid FCM registration token')
-            ) {
-              await removeInvalidDeviceToken(recipientUid, token);
+            try {
+              console.log(`📤 Sending FCM to token for ${recipientUid}`);
+              const fallbackResult = await sendFcmWithFallback(singleMessage, `user:${recipientUid}`);
+              totalTokens += 1;
+              totalSuccess += 1;
+              userSuccessCount += 1;
+              details.push({
+                recipientUid,
+                token,
+                success: true,
+                messageId: fallbackResult.response,
+                channel: fallbackResult.channel,
+              });
+              console.log(`✅ FCM sent to ${recipientUid} token via ${fallbackResult.channel}: ${fallbackResult.response}`);
+            } catch (sendError) {
+              userFailureCount += 1;
+              const errorMessage = String(sendError?.message || sendError);
+              console.error(
+                `❌ Failed to send admin FCM for user ${recipientUid} token:`,
+                errorMessage,
+              );
+              details.push({
+                recipientUid,
+                token,
+                status: 'send_error',
+                error: errorMessage,
+              });
+
+              if (
+                errorMessage.includes('Requested entity was not found') ||
+                errorMessage.includes('not a valid FCM registration token') ||
+                errorMessage.includes('registration token is not a valid FCM registration token')
+              ) {
+                await removeInvalidDeviceToken(recipientUid, token);
+              }
             }
           }
-        }
 
-        console.log(`📊 User ${recipientUid} result: ${userSuccessCount} succeeded, ${userFailureCount} failed`);
-      } catch (sendError) {
-        console.error(
-          `❌ Failed to send admin FCM for user ${recipientUid}:`,
-          sendError?.message || sendError,
-        );
-        details.push({ recipientUid, status: 'send_error', error: String(sendError) });
-      }
+          console.log(`📊 User ${recipientUid} result: ${userSuccessCount} succeeded, ${userFailureCount} failed`);
+        } catch (sendError) {
+          console.error(
+            `❌ Failed to send admin FCM for user ${recipientUid}:`,
+            sendError?.message || sendError,
+          );
+          details.push({ recipientUid, status: 'send_error', error: String(sendError) });
+        }
       }
     }
 
