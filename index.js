@@ -35,6 +35,7 @@ let db; // ✅ أعلن المتغير هنا (خارج الـ try)
 try {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
+    projectId: serviceAccount.project_id,
   });
   console.log('✅ Firebase Admin initialized successfully with project ID:', serviceAccount.project_id);
   
@@ -287,6 +288,12 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
               console.log(
                 `❌ Admin FCM failed for ${recipientUid} token ${index + 1}: ${resp.error?.code} - ${resp.error?.message}`,
               );
+              details.push({
+                recipientUid,
+                tokenIndex: index,
+                status: 'send_error',
+                error: String(resp.error?.message || resp.error),
+              });
             }
           });
         } catch (sendError) {
@@ -295,6 +302,39 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
             sendError?.message || sendError,
           );
           details.push({ recipientUid, status: 'send_error', error: String(sendError) });
+
+          // Fallback: try each token individually in case sendMulticast hits a batch endpoint issue.
+          for (const token of deviceTokens) {
+            try {
+              const singleMessage = {
+                ...messagePayload,
+                token,
+              };
+              console.log(`📤 Sending single-message FCM to token for ${recipientUid}`);
+              const singleResponse = await admin.messaging().send(singleMessage);
+              totalTokens += 1;
+              totalSuccess += 1;
+              details.push({
+                recipientUid,
+                token,
+                success: true,
+                messageId: singleResponse,
+                fallback: true,
+              });
+              console.log(`✅ Fallback FCM sent to ${recipientUid} token: ${singleResponse}`);
+            } catch (singleError) {
+              console.error(
+                `❌ Fallback single FCM failed for ${recipientUid} token:`,
+                singleError?.message || singleError,
+              );
+              details.push({
+                recipientUid,
+                token,
+                status: 'fallback_send_error',
+                error: String(singleError),
+              });
+            }
+          }
         }
       }
     }
