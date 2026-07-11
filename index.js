@@ -300,16 +300,25 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
             console.log(`✅ Admin FCM sent to ${recipientUid} token: ${response}`);
           } catch (sendError) {
             userFailureCount += 1;
+            const errorMessage = String(sendError?.message || sendError);
             console.error(
               `❌ Failed to send admin FCM for user ${recipientUid} token:`,
-              sendError?.message || sendError,
+              errorMessage,
             );
             details.push({
               recipientUid,
               token,
               status: 'send_error',
-              error: String(sendError),
+              error: errorMessage,
             });
+
+            if (
+              errorMessage.includes('Requested entity was not found') ||
+              errorMessage.includes('not a valid FCM registration token') ||
+              errorMessage.includes('registration token is not a valid FCM registration token')
+            ) {
+              await removeInvalidDeviceToken(recipientUid, token);
+            }
           }
         }
 
