@@ -235,6 +235,8 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 
     const { title, body, recipients, topic, data } = req.body;
     const topicName = typeof topic === 'string' ? topic.trim() : '';
+    const attachmentImageUrl = typeof req.body.attachmentImageUrl === 'string' ? req.body.attachmentImageUrl.trim() : '';
+    const notificationIconUrl = typeof req.body.notificationIconUrl === 'string' ? req.body.notificationIconUrl.trim() : '';
     const hasTopicTarget = topicName.length > 0;
     console.log(`📨 Received FCM request: title="${title}", body="${body}", topic="${topicName}", recipients=${Array.isArray(recipients) ? recipients.length : 0}`);
     
@@ -265,7 +267,13 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       topicName: clientData.topicName || '',
     };
 
-    const finalData = { ...defaultData, ...clientData };
+    const finalData = {
+      ...defaultData,
+      ...clientData,
+      ...(attachmentImageUrl ? { attachmentImageUrl } : {}),
+      ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
+      ...(notificationIconUrl ? { notificationIconUrl } : {}),
+    };
     const sanitizedData = Object.fromEntries(
       Object.entries(finalData).map(([key, value]) => [
         String(key),
@@ -285,6 +293,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           channelId: 'high_importance_channel',
           sound: 'default',
           defaultSound: true,
+          ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
         },
       },
       apns: {
