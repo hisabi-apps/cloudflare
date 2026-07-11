@@ -303,7 +303,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           channelId: 'high_importance_channel',
           sound: 'default',
           defaultSound: true,
-          ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
+          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
         },
       },
       apns: {
