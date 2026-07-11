@@ -291,7 +291,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       notification: {
         title: title.trim(),
         body: body.trim(),
-        ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
+        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
       },
       data: {
         ...sanitizedData,
