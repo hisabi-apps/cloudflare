@@ -197,7 +197,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       notification: {
         title: title.trim(),
         body: body.trim(),
-        sound: 'default',
       },
       data: sanitizedData,
       android: {
@@ -212,8 +211,13 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         headers: {
           'apns-priority': '10',
         },
+        payload: {
+          aps: {
+            contentAvailable: true,
+            sound: 'default',
+          },
+        },
       },
-      contentAvailable: true,
     };
 
     if (hasTopicTarget) {
@@ -261,81 +265,51 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         }
 
         try {
-          const multicast = {
+          let userSuccessCount = 0;
+        let userFailureCount = 0;
+
+        for (const token of deviceTokens) {
+          const singleMessage = {
             ...messagePayload,
-            tokens: deviceTokens,
+            token,
           };
 
-          console.log(`📤 Sending multicast to ${deviceTokens.length} tokens for ${recipientUid}`);
-          console.log(`📋 Payload: ${JSON.stringify(multicast)}`);
-          const response = await admin.messaging().sendMulticast(multicast);
-          totalTokens += deviceTokens.length;
-          totalSuccess += response.successCount;
-          details.push({
-            recipientUid,
-            successCount: response.successCount,
-            failureCount: response.failureCount,
-          });
-
-          console.log(`📊 Multicast result: ${response.successCount} succeeded, ${response.failureCount} failed`);
-
-          response.responses.forEach((resp, index) => {
-            if (resp.success) {
-              console.log(
-                `✅ Admin FCM sent to ${recipientUid} token ${index + 1}/${deviceTokens.length}: ${resp.messageId}`,
-              );
-            } else {
-              console.log(
-                `❌ Admin FCM failed for ${recipientUid} token ${index + 1}: ${resp.error?.code} - ${resp.error?.message}`,
-              );
-              details.push({
-                recipientUid,
-                tokenIndex: index,
-                status: 'send_error',
-                error: String(resp.error?.message || resp.error),
-              });
-            }
-          });
-        } catch (sendError) {
-          console.error(
-            `❌ Failed to send admin FCM for user ${recipientUid}:`,
-            sendError?.message || sendError,
-          );
-          details.push({ recipientUid, status: 'send_error', error: String(sendError) });
-
-          // Fallback: try each token individually in case sendMulticast hits a batch endpoint issue.
-          for (const token of deviceTokens) {
-            try {
-              const singleMessage = {
-                ...messagePayload,
-                token,
-              };
-              console.log(`📤 Sending single-message FCM to token for ${recipientUid}`);
-              const singleResponse = await admin.messaging().send(singleMessage);
-              totalTokens += 1;
-              totalSuccess += 1;
-              details.push({
-                recipientUid,
-                token,
-                success: true,
-                messageId: singleResponse,
-                fallback: true,
-              });
-              console.log(`✅ Fallback FCM sent to ${recipientUid} token: ${singleResponse}`);
-            } catch (singleError) {
-              console.error(
-                `❌ Fallback single FCM failed for ${recipientUid} token:`,
-                singleError?.message || singleError,
-              );
-              details.push({
-                recipientUid,
-                token,
-                status: 'fallback_send_error',
-                error: String(singleError),
-              });
-            }
+          try {
+            console.log(`📤 Sending FCM to token for ${recipientUid}`);
+            const response = await admin.messaging().send(singleMessage);
+            totalTokens += 1;
+            totalSuccess += 1;
+            userSuccessCount += 1;
+            details.push({
+              recipientUid,
+              token,
+              success: true,
+              messageId: response,
+            });
+            console.log(`✅ Admin FCM sent to ${recipientUid} token: ${response}`);
+          } catch (sendError) {
+            userFailureCount += 1;
+            console.error(
+              `❌ Failed to send admin FCM for user ${recipientUid} token:`,
+              sendError?.message || sendError,
+            );
+            details.push({
+              recipientUid,
+              token,
+              status: 'send_error',
+              error: String(sendError),
+            });
           }
         }
+
+        console.log(`📊 User ${recipientUid} result: ${userSuccessCount} succeeded, ${userFailureCount} failed`);
+      } catch (sendError) {
+        console.error(
+          `❌ Failed to send admin FCM for user ${recipientUid}:`,
+          sendError?.message || sendError,
+        );
+        details.push({ recipientUid, status: 'send_error', error: String(sendError) });
+      }
       }
     }
 
@@ -845,7 +819,6 @@ app.patch('/api/moderate/:id', async (req, res) => {
               notification: {
                 title: approved ? 'ملف مقبول' : 'ملف مرفوض',
                 body: notificationMessage,
-                sound: 'default',
               },
               data: {
                 fileId: id,
@@ -863,8 +836,13 @@ app.patch('/api/moderate/:id', async (req, res) => {
                 headers: {
                   'apns-priority': '10',
                 },
+                payload: {
+                  aps: {
+                    contentAvailable: true,
+                    sound: 'default',
+                  },
+                },
               },
-              contentAvailable: true,
             }));
 
             const fcmResults = await Promise.allSettled(
