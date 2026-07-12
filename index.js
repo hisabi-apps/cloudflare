@@ -577,15 +577,21 @@ function buildObjectKey(subject, title, originalName) {
 
 function buildPublicUrl(req, objectKey) {
   const cleanedKey = objectKey.replace(/^\/+/, '');
+  // دائماً استخدم الرابط المباشر من Cloudflare R2 إذا كان متاحاً
   if (R2_PUBLIC_BASE_URL && R2_PUBLIC_BASE_URL.trim()) {
     const base = R2_PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
     const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
-    return `${base}/${encodedKey}`;
+    const directUrl = `${base}/${encodedKey}`;
+    console.log(`✅ Using direct R2 URL: ${directUrl}`);
+    return directUrl;
   }
+  // Fallback: استخدم رابط الخادم إذا لم يكن R2_PUBLIC_BASE_URL معرّفاً
   const protocol = req.get('x-forwarded-proto') || req.protocol;
   const host = req.get('x-forwarded-host') || req.get('host');
   const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
-  return `${protocol}://${host}/files/${encodedKey}`;
+  const fallbackUrl = `${protocol}://${host}/files/${encodedKey}`;
+  console.log(`⚠️ R2_PUBLIC_BASE_URL not set, using fallback: ${fallbackUrl}`);
+  return fallbackUrl;
 }
 
 // -------------------- نقطة الحذف (دون تغيير مع إضافة مسح الكاش) --------------------
