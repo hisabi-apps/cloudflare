@@ -577,20 +577,31 @@ function buildObjectKey(subject, title, originalName) {
 
 function buildPublicUrl(req, objectKey) {
   const cleanedKey = objectKey.replace(/^\/+/, '');
-  // دائماً استخدم الرابط المباشر من Cloudflare R2 إذا كان متاحاً
+  
+  // 🎯 الأولوية: استخدم الرابط المباشر من Cloudflare R2 دائماً
+  // هذا أفضل لـ FCM والصور التي تظهر في شريط الحالة
+  if (R2_ACCOUNT_ID) {
+    const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
+    const directUrl = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${encodedKey}`;
+    console.log(`✅ Using direct Cloudflare R2 URL: ${directUrl}`);
+    return directUrl;
+  }
+  
+  // الخطة الثانية: إذا تم تعريف R2_PUBLIC_BASE_URL استخدمه
   if (R2_PUBLIC_BASE_URL && R2_PUBLIC_BASE_URL.trim()) {
     const base = R2_PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
     const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
     const directUrl = `${base}/${encodedKey}`;
-    console.log(`✅ Using direct R2 URL: ${directUrl}`);
+    console.log(`✅ Using R2_PUBLIC_BASE_URL: ${directUrl}`);
     return directUrl;
   }
-  // Fallback: استخدم رابط الخادم إذا لم يكن R2_PUBLIC_BASE_URL معرّفاً
+  
+  // الخطة الثالثة (Fallback): استخدم رابط الخادم كملاذ أخير
   const protocol = req.get('x-forwarded-proto') || req.protocol;
   const host = req.get('x-forwarded-host') || req.get('host');
   const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
   const fallbackUrl = `${protocol}://${host}/files/${encodedKey}`;
-  console.log(`⚠️ R2_PUBLIC_BASE_URL not set, using fallback: ${fallbackUrl}`);
+  console.log(`⚠️ Using server fallback URL: ${fallbackUrl}`);
   return fallbackUrl;
 }
 
