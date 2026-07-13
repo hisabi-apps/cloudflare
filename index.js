@@ -292,22 +292,14 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     );
 
     const messagePayload = {
-      notification: {
+      data: {
         title: title.trim(),
         body: body.trim(),
-      },
-      data: {
         ...sanitizedData,
         ...topLevelNotificationData,
       },
       android: {
         priority: 'high',
-        notification: {
-          channelId: 'high_importance_channel',
-          sound: 'default',
-          defaultSound: true,
-          ...(attachmentImageUrl && showBigPicture ? { imageUrl: attachmentImageUrl } : {}),
-        },
       },
       apns: {
         headers: {
