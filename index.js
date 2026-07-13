@@ -302,6 +302,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           channelId: 'high_importance_channel',
           sound: 'default',
           defaultSound: true,
+          ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
         },
       },
       apns: {
@@ -312,10 +313,16 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           aps: {
             contentAvailable: true,
             sound: 'default',
+            ...(attachmentImageUrl ? { 'mutable-content': 1 } : {}),
           },
         },
       },
     };
+
+    // 📸 Debug: Log the Android notification with image URL
+    if (attachmentImageUrl) {
+      console.log(`📸 Android notification with image: ${attachmentImageUrl}`);
+    }
 
     if (hasTopicTarget) {
       try {
