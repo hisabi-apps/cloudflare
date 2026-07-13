@@ -292,10 +292,12 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     );
 
     const messagePayload = {
-      data: {
-        ...sanitizedData,
+      notification: {
         title: title.trim(),
         body: body.trim(),
+      },
+      data: {
+        ...sanitizedData,
         ...topLevelNotificationData,
       },
       android: {
