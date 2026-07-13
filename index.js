@@ -292,11 +292,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     );
 
     const messagePayload = {
-      notification: {
-        title: title.trim(),
-        body: body.trim(),
-        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-      },
       data: {
         title: title.trim(),
         body: body.trim(),
@@ -305,10 +300,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       },
       android: {
         priority: 'high',
-        notification: {
-          channelId: 'high_importance_channel',
-          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-        },
       },
       apns: {
         headers: {
@@ -316,10 +307,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         },
         payload: {
           aps: {
-            alert: {
-              title: title.trim(),
-              body: body.trim(),
-            },
             contentAvailable: true,
             sound: 'default',
             ...(attachmentImageUrl ? { 'mutable-content': 1 } : {}),
