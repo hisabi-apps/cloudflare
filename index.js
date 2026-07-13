@@ -267,6 +267,10 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       topicName: clientData.topicName || '',
     };
 
+    const showBigPicture =
+      clientData.showBigPicture === true ||
+      clientData.showBigPicture === 'true';
+
     const finalData = {
       ...defaultData,
       ...clientData,
@@ -302,7 +306,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           channelId: 'high_importance_channel',
           sound: 'default',
           defaultSound: true,
-          ...(attachmentImageUrl ? { imageUrl: attachmentImageUrl } : {}),
+          ...(attachmentImageUrl && showBigPicture ? { imageUrl: attachmentImageUrl } : {}),
         },
       },
       apns: {
