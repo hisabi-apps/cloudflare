@@ -233,10 +233,11 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to send notifications.' });
     }
 
-    const { title, body, recipients, topic, data } = req.body;
+    const requestBody = req.body || {};
+    const { title, body, recipients, topic, data } = requestBody;
     const topicName = typeof topic === 'string' ? topic.trim() : '';
-    const attachmentImageUrl = typeof req.body.attachmentImageUrl === 'string' ? req.body.attachmentImageUrl.trim() : '';
-    const notificationIconUrl = typeof req.body.notificationIconUrl === 'string' ? req.body.notificationIconUrl.trim() : '';
+    const attachmentImageUrl = typeof requestBody.attachmentImageUrl === 'string' ? requestBody.attachmentImageUrl.trim() : '';
+    const notificationIconUrl = typeof requestBody.notificationIconUrl === 'string' ? requestBody.notificationIconUrl.trim() : '';
     const hasTopicTarget = topicName.length > 0;
     console.log(`📨 Received FCM request: title="${title}", body="${body}", topic="${topicName}", recipients=${Array.isArray(recipients) ? recipients.length : 0}`);
     
@@ -259,6 +260,9 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     const details = [];
 
     const clientData = data || {};
+    const localizedTitleEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'title_ar' || key === 'title_en' || key === 'title_fr');
+    const localizedBodyEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'body_ar' || key === 'body_en' || key === 'body_fr');
+
     const defaultData = {
       notificationType: clientData.notificationType || 'admin_message',
       category: clientData.category || 'general',
@@ -286,9 +290,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         value == null ? '' : String(value),
       ]),
     );
-
-    const localizedTitleEntries = Object.entries(data || {}).filter(([key]) => key === 'title_ar' || key === 'title_en' || key === 'title_fr');
-    const localizedBodyEntries = Object.entries(data || {}).filter(([key]) => key === 'body_ar' || key === 'body_en' || key === 'body_fr');
 
     const localizedTitleData = Object.fromEntries(
       localizedTitleEntries.map(([key, value]) => [`title_${key.split('_').pop()}`, value])
