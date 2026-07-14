@@ -296,16 +296,16 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       data: {
         title: title.trim(),
         body: body.trim(),
-        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+        
         ...sanitizedData,
         ...topLevelNotificationData,
       },
       android: {
         priority: 'high',
         notification: {
-          
+          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
            
-          ...(notificationIconUrl ? { icon: notificationIconUrl } : {}),
+          
         },
       },
       apns: {
