@@ -302,7 +302,9 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       },
       android: {
         priority: 'high',
-       
+        
+          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+        
       },
       apns: {
         headers: {
