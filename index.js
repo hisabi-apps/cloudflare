@@ -287,6 +287,16 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       ]),
     );
 
+    const localizedTitleEntries = Object.entries(data || {}).filter(([key]) => key === 'title_ar' || key === 'title_en' || key === 'title_fr');
+    const localizedBodyEntries = Object.entries(data || {}).filter(([key]) => key === 'body_ar' || key === 'body_en' || key === 'body_fr');
+
+    const localizedTitleData = Object.fromEntries(
+      localizedTitleEntries.map(([key, value]) => [`title_${key.split('_').pop()}`, value])
+    );
+    const localizedBodyData = Object.fromEntries(
+      localizedBodyEntries.map(([key, value]) => [`body_${key.split('_').pop()}`, value])
+    );
+
     const messagePayload = {
       notification: {
         title: title.trim(),
@@ -296,7 +306,8 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       data: {
         title: title.trim(),
         body: body.trim(),
-        
+        ...localizedTitleData,
+        ...localizedBodyData,
         ...sanitizedData,
         ...topLevelNotificationData,
       },
