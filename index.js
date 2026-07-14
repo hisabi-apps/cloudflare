@@ -267,6 +267,10 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       topicName: clientData.topicName || '',
     };
 
+    const showBigPicture =
+      clientData.showBigPicture === true ||
+      clientData.showBigPicture === 'true';
+
     const finalData = {
       ...defaultData,
       ...clientData,
@@ -291,7 +295,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       notification: {
         title: title.trim(),
         body: body.trim(),
-        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
       },
       data: {
         ...sanitizedData,
@@ -303,7 +306,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           channelId: 'high_importance_channel',
           sound: 'default',
           defaultSound: true,
-          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+          ...(attachmentImageUrl && showBigPicture ? { imageUrl: attachmentImageUrl } : {}),
         },
       },
       apns: {
@@ -314,10 +317,16 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           aps: {
             contentAvailable: true,
             sound: 'default',
+            ...(attachmentImageUrl ? { 'mutable-content': 1 } : {}),
           },
         },
       },
     };
+
+    // 📸 Debug: Log the Android notification with image URL
+    if (attachmentImageUrl) {
+      console.log(`📸 Android notification with image: ${attachmentImageUrl}`);
+    }
 
     if (hasTopicTarget) {
       try {
@@ -577,15 +586,16 @@ function buildObjectKey(subject, title, originalName) {
 
 function buildPublicUrl(req, objectKey) {
   const cleanedKey = objectKey.replace(/^\/+/, '');
-  if (R2_PUBLIC_BASE_URL && R2_PUBLIC_BASE_URL.trim()) {
-    const base = R2_PUBLIC_BASE_URL.trim().replace(/\/+$/, '');
-    const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
-    return `${base}/${encodedKey}`;
-  }
+  
+  // 🎯 الأولوية: استخدم رابط الخادم العام (متاح للجميع بما فيهم FCM)
+  // هذا ضروري لـ FCM والصور التي تظهر في شريط الحالة
+  // الروابط المباشرة من R2 محمية ولا يستطيع FCM الوصول إليها
   const protocol = req.get('x-forwarded-proto') || req.protocol;
   const host = req.get('x-forwarded-host') || req.get('host');
   const encodedKey = cleanedKey.split('/').map(encodeURIComponent).join('/');
-  return `${protocol}://${host}/files/${encodedKey}`;
+  const publicServerUrl = `${protocol}://${host}/files/${encodedKey}`;
+  console.log(`✅ Using public server URL (FCM-compatible): ${publicServerUrl}`);
+  return publicServerUrl;
 }
 
 // -------------------- نقطة الحذف (دون تغيير مع إضافة مسح الكاش) --------------------
