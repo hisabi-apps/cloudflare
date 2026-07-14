@@ -301,7 +301,11 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       },
       android: {
         priority: 'high',
-      
+        notification: {
+          channelId: 'admin_notifications',
+          imageUrl: attachmentImageUrl || undefined,
+          icon: notificationIconUrl || undefined,
+        },
       },
       apns: {
         headers: {
@@ -311,7 +315,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           aps: {
             contentAvailable: true,
             sound: 'default',
-           
           },
         },
       },
