@@ -303,11 +303,9 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       android: {
         priority: 'high',
         notification: {
-          data: {
-            title: title.trim(),
-            body: body.trim(),
-            ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-          }
+          
+           
+          ...(notificationIconUrl ? { icon: notificationIconUrl } : {}),
         },
       },
       apns: {
