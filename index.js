@@ -291,7 +291,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       notification: {
         title: title.trim(),
         body: body.trim(),
-        
       },
       data: {
         title: title.trim(),
@@ -302,11 +301,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       },
       android: {
         priority: 'high',
-        notification: {
-          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-           
-          
-        },
+      
       },
       apns: {
         headers: {
@@ -316,7 +311,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           aps: {
             contentAvailable: true,
             sound: 'default',
-            ...(attachmentImageUrl ? { 'mutable-content': 1 } : {}),
+           
           },
         },
       },
