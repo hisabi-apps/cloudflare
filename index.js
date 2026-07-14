@@ -288,6 +288,11 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     );
 
     const messagePayload = {
+      notification: {
+        title: title.trim(),
+        body: body.trim(),
+        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+      },
       data: {
         title: title.trim(),
         body: body.trim(),
@@ -296,6 +301,9 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       },
       android: {
         priority: 'high',
+        notification: {
+          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+        },
       },
       apns: {
         headers: {
