@@ -291,11 +291,12 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       notification: {
         title: title.trim(),
         body: body.trim(),
-        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+        
       },
       data: {
         title: title.trim(),
         body: body.trim(),
+        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
         ...sanitizedData,
         ...topLevelNotificationData,
       },
