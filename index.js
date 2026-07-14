@@ -291,6 +291,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       notification: {
         title: title.trim(),
         body: body.trim(),
+        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
       },
       data: {
         title: title.trim(),
@@ -302,9 +303,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       android: {
         priority: 'high',
         notification: {
-          channelId: 'admin_notifications',
-          imageUrl: attachmentImageUrl || undefined,
-          icon: notificationIconUrl || undefined,
+          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
         },
       },
       apns: {
