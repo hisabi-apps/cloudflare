@@ -314,7 +314,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       },
       android: {
         priority: 'high',
-            ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
         notification: {
           ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
         },
@@ -1190,4 +1189,4 @@ app.patch('/api/files/:id', async (req, res) => {
     console.error('Update metadata failed:', error);
     res.status(500).json({ error: 'Failed to update metadata.' });
   }
-});
+});                                                                                                             
