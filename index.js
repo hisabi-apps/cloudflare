@@ -289,15 +289,24 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       ]),
     );
 
-    const localizedTitleEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'title_ar' || key === 'title_en' || key === 'title_fr');
-    const localizedBodyEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'body_ar' || key === 'body_en' || key === 'body_fr');
-    
-    const localizedTitleData = Object.fromEntries(
-      localizedTitleEntries.map(([key, value]) => [`title_${key.split('_').pop()}`, value])
-    );
-    const localizedBodyData = Object.fromEntries(
-      localizedBodyEntries.map(([key, value]) => [`body_${key.split('_').pop()}`, value])
-    );
+    // ✅ Ensure all language variants are available (fallback to default title/body)
+    const titleAr = requestBody.title_ar?.trim() || title.trim();
+    const titleEn = requestBody.title_en?.trim() || title.trim();
+    const titleFr = requestBody.title_fr?.trim() || title.trim();
+    const bodyAr = requestBody.body_ar?.trim() || body.trim();
+    const bodyEn = requestBody.body_en?.trim() || body.trim();
+    const bodyFr = requestBody.body_fr?.trim() || body.trim();
+
+    const localizedTitleData = {
+      title_ar: titleAr,
+      title_en: titleEn,
+      title_fr: titleFr,
+    };
+    const localizedBodyData = {
+      body_ar: bodyAr,
+      body_en: bodyEn,
+      body_fr: bodyFr,
+    };
 
     // 📸 Debug: Log the attachment image URL
     if (attachmentImageUrl) {
@@ -306,16 +315,16 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 
     if (hasTopicTarget) {
       try {
-        // For topics, use default (Arabic) or request body language
-        const defaultLang = 'ar';
-        const topicNotificationTitle = requestBody[`title_${defaultLang}`]?.trim() || title.trim();
-        const topicNotificationBody = requestBody[`body_${defaultLang}`]?.trim() || body.trim();
+        // For topics, use Arabic by default
+        const topicNotificationTitle = titleAr;
+        const topicNotificationBody = bodyAr;
 
         const topicMessage = {
           topic: topicName,
           notification: {
             title: topicNotificationTitle,
             body: topicNotificationBody,
+            ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
           },
           data: {
             title: title.trim(),
@@ -327,6 +336,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           },
           android: {
             priority: 'high',
+            ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
           },
           apns: {
             headers: {
@@ -389,8 +399,12 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 
           for (const token of deviceTokens) {
             // 🎯 Build localized payload for this specific user
-            const notificationTitle = requestBody[`title_${userLanguage}`]?.trim() || title.trim();
-            const notificationBody = requestBody[`body_${userLanguage}`]?.trim() || body.trim();
+            const notificationTitle = userLanguage === 'ar' ? titleAr : (userLanguage === 'en' ? titleEn : titleFr);
+            const notificationBody = userLanguage === 'ar' ? bodyAr : (userLanguage === 'en' ? bodyEn : bodyFr);
+
+            console.log(`\n🎯 Building payload for user ${recipientUid} (${userLanguage}):`);
+            console.log(`   Final title: ${notificationTitle}`);
+            console.log(`   Final body: ${notificationBody}`);
 
             const singleMessage = {
               token,
