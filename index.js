@@ -965,7 +965,11 @@ app.patch('/api/moderate/:id', async (req, res) => {
 
           // حفظ الإشعار في Firestore
           const notificationsRef = db.collection('users').doc(userId).collection('notifications');
-          const notifDocRef = await notificationsRef.add(notificationData);
+          const notifDocRef = notificationsRef.doc();
+          await notifDocRef.set({
+            id: notifDocRef.id,
+            ...notificationData,
+          });
           console.log(`✅ Notification saved in Firestore: ${notifDocRef.id}`);
 
           // محاولة إرسال FCM notification إذا كان هناك device token
