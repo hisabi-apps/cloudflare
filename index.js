@@ -108,6 +108,27 @@ async function removeInvalidDeviceToken(userId, token) {
   }
 }
 
+function getLocalizedField(requestBody, field, lang) {
+  const languageCode = (lang || 'ar').toString().trim().toLowerCase();
+  const fieldKey = `${field}_${languageCode}`;
+  const alternateBodyKey = field === 'body' ? `message_${languageCode}` : null;
+
+  const value = requestBody[fieldKey] || (alternateBodyKey ? requestBody[alternateBodyKey] : undefined);
+  if (typeof value === 'string' && value.trim() !== '') {
+    return value.trim();
+  }
+
+  if (typeof requestBody[field] === 'string' && requestBody[field].trim() !== '') {
+    return requestBody[field].trim();
+  }
+
+  if (field === 'body' && typeof requestBody.message === 'string' && requestBody.message.trim() !== '') {
+    return requestBody.message.trim();
+  }
+
+  return '';
+}
+
 async function sendFcmViaHttp(message) {
   const auth = new GoogleAuth({
     credentials: serviceAccount,
@@ -387,13 +408,22 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           let userFailureCount = 0;
 
           for (const token of deviceTokens) {
+            const userLang = String(userData.language || userData.languageCode || 'ar').trim().toLowerCase();
+            const localizedTitle = getLocalizedField(requestBody, 'title', userLang) || messagePayload.notification.title;
+            const localizedBody = getLocalizedField(requestBody, 'body', userLang) || messagePayload.notification.body;
+
             const singleMessage = {
               ...messagePayload,
               token,
+              notification: {
+                ...messagePayload.notification,
+                title: localizedTitle,
+                body: localizedBody,
+              },
             };
 
             try {
-              console.log(`📤 Sending FCM to token for ${recipientUid}`);
+              console.log(`📤 Sending FCM to token for ${recipientUid} (lang=${userLang})`);
               const fallbackResult = await sendFcmWithFallback(singleMessage, `user:${recipientUid}`);
               totalTokens += 1;
               totalSuccess += 1;
