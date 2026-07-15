@@ -9,6 +9,7 @@ const NodeCache = require('node-cache');
 const axios = require('axios');
 const { GoogleAuth } = require('google-auth-library');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { buildLocalizedFcmPayload } = require('./notification_payload');
 
 // -------------------- Firebase Admin SDK --------------------
 const admin = require('firebase-admin');
@@ -298,38 +299,18 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       localizedBodyEntries.map(([key, value]) => [`body_${key.split('_').pop()}`, value])
     );
 
-    const messagePayload = {
-      notification: {
-        title: title.trim(),
-        body: body.trim(),
-        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-      },
+    const messagePayload = buildLocalizedFcmPayload({
+      title: title.trim(),
+      body: body.trim(),
       data: {
-        title: title.trim(),
-        body: body.trim(),
         ...localizedTitleData,
         ...localizedBodyData,
         ...sanitizedData,
         ...topLevelNotificationData,
       },
-      android: {
-        priority: 'high',
-        notification: {
-          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-        },
-      },
-      apns: {
-        headers: {
-          'apns-priority': '10',
-        },
-        payload: {
-          aps: {
-            contentAvailable: true,
-            sound: 'default',
-          },
-        },
-      },
-    };
+      attachmentImageUrl,
+      notificationIconUrl,
+    });
 
     // 📸 Debug: Log the Android notification with image URL
     if (attachmentImageUrl) {
