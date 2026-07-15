@@ -194,6 +194,38 @@ async function sendFcmWithFallback(message, label) {
   }
 }
 
+function normalizeRecipientData(recipient) {
+  if (!recipient || typeof recipient !== 'object') {
+    return null;
+  }
+
+  const uid = recipient.uid ? String(recipient.uid).trim() : '';
+  const language = recipient.language
+    ? String(recipient.language).trim().toLowerCase()
+    : 'ar';
+
+  const deviceTokens = Array.isArray(recipient.deviceTokens)
+    ? recipient.deviceTokens
+        .filter((token) => typeof token === 'string' && token.trim() !== '')
+        .map((token) => token.trim())
+    : [];
+
+  const uniqueDeviceTokens = [...new Set(deviceTokens)];
+  if (uniqueDeviceTokens.length === 0) {
+    return null;
+  }
+
+  return {
+    uid,
+    language: language || 'ar',
+    deviceTokens: uniqueDeviceTokens,
+  };
+}
+
+async function sendMulticastMessage(message) {
+  return admin.messaging().sendMulticast(message);
+}
+
 function isAdminUserData(userData, email) {
   if (!userData) {
     return false;
@@ -255,12 +287,14 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     }
 
     const requestBody = req.body || {};
-    const { title, body, recipients, topic, data } = requestBody;
+    const { title, body, recipients, recipientsData, topic, data } = requestBody;
     const topicName = typeof topic === 'string' ? topic.trim() : '';
     const attachmentImageUrl = typeof requestBody.attachmentImageUrl === 'string' ? requestBody.attachmentImageUrl.trim() : '';
     const notificationIconUrl = typeof requestBody.notificationIconUrl === 'string' ? requestBody.notificationIconUrl.trim() : '';
     const hasTopicTarget = topicName.length > 0;
-    console.log(`📨 Received FCM request: title="${title}", body="${body}", topic="${topicName}", recipients=${Array.isArray(recipients) ? recipients.length : 0}`);
+    const hasRecipientsData = Array.isArray(recipientsData) && recipientsData.length > 0;
+    const hasRecipients = hasRecipientsData || (Array.isArray(recipients) && recipients.length > 0);
+    console.log(`📨 Received FCM request: title="${title}", body="${body}", topic="${topicName}", recipients=${Array.isArray(recipients) ? recipients.length : 0}, recipientsData=${hasRecipientsData ? recipientsData.length : 0}`);
     
     if (typeof title !== 'string' || title.trim() === '') {
       return res.status(400).json({ error: 'Notification title is required.' });
@@ -268,13 +302,33 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     if (typeof body !== 'string' || body.trim() === '') {
       return res.status(400).json({ error: 'Notification body is required.' });
     }
-    if (!hasTopicTarget && (!Array.isArray(recipients) || recipients.length === 0)) {
+    if (!hasTopicTarget && !hasRecipients) {
       return res.status(400).json({ error: 'Recipients are required unless topic is provided.' });
     }
 
-    const uniqueRecipientUids = hasTopicTarget ? [] : [...new Set(recipients
-      .map((recipient) => String(recipient).trim())
-      .filter((recipient) => recipient.length > 0))];
+    const normalizedRecipientsData = hasRecipientsData
+      ? recipientsData
+          .map(normalizeRecipientData)
+          .filter((recipient) => recipient !== null)
+      : [];
+
+    const uniqueRecipientUids = hasTopicTarget
+      ? []
+      : hasRecipientsData
+          ? [
+              ...new Set(
+                normalizedRecipientsData
+                  .map((recipient) => recipient.uid)
+                  .filter((uid) => uid.length > 0),
+              ),
+            ]
+          : [
+              ...new Set(
+                recipients
+                  .map((recipient) => String(recipient).trim())
+                  .filter((recipient) => recipient.length > 0),
+              ),
+            ];
 
     let totalTokens = 0;
     let totalSuccess = 0;
@@ -383,6 +437,96 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           sendError?.message || sendError,
         );
         details.push({ topic: topicName, status: 'send_error', error: String(sendError) });
+      }
+    } else if (hasRecipientsData) {
+      for (const recipientData of normalizedRecipientsData) {
+        const recipientUid = recipientData.uid || '';
+        const deviceTokens = recipientData.deviceTokens || [];
+        const userLang = recipientData.language || 'ar';
+
+        console.log(`📱 Recipient ${recipientUid || 'unknown'} has ${deviceTokens.length} tokens`);
+
+        if (deviceTokens.length === 0) {
+          details.push({ recipientUid, status: 'no_tokens' });
+          continue;
+        }
+
+        const localizedTitle =
+          getLocalizedField(requestBody, 'title', userLang) || messagePayload.notification.title;
+        const localizedBody =
+          getLocalizedField(requestBody, 'body', userLang) || messagePayload.notification.body;
+
+        const personalizedMessage = {
+          ...messagePayload,
+          notification: {
+            ...messagePayload.notification,
+            title: localizedTitle,
+            body: localizedBody,
+          },
+          data: {
+            ...messagePayload.data,
+            title: localizedTitle,
+            body: localizedBody,
+          },
+        };
+
+        const chunkSize = 500;
+        for (let i = 0; i < deviceTokens.length; i += chunkSize) {
+          const chunkTokens = deviceTokens.slice(i, i + chunkSize);
+          const multicastMessage = {
+            ...personalizedMessage,
+            tokens: chunkTokens,
+          };
+
+          try {
+            console.log(`📤 Sending multicast FCM to ${chunkTokens.length} tokens for ${recipientUid || 'unknown recipient'}`);
+            const multicastResponse = await sendMulticastMessage(multicastMessage);
+            totalTokens += chunkTokens.length;
+            totalSuccess += multicastResponse.successCount;
+
+            for (let index = 0; index < multicastResponse.responses.length; index += 1) {
+              const resp = multicastResponse.responses[index];
+              const token = chunkTokens[index];
+              if (resp.success) {
+                details.push({
+                  recipientUid,
+                  token,
+                  success: true,
+                  messageId: resp.messageId,
+                });
+              } else {
+                const errorMessage = String(resp.error?.message || resp.error || 'unknown error');
+                details.push({
+                  recipientUid,
+                  token,
+                  status: 'send_error',
+                  error: errorMessage,
+                });
+
+                if (
+                  errorMessage.includes('Requested entity was not found') ||
+                  errorMessage.includes('not a valid FCM registration token') ||
+                  errorMessage.includes('registration token is not a valid FCM registration token')
+                ) {
+                  if (recipientUid) {
+                    await removeInvalidDeviceToken(recipientUid, token);
+                  }
+                }
+              }
+            }
+          } catch (sendError) {
+            const errorMessage = String(sendError?.message || sendError);
+            console.error(
+              `❌ Failed to send multicast admin FCM for ${recipientUid || 'unknown recipient'}:`,
+              errorMessage,
+            );
+            details.push({
+              recipientUid,
+              status: 'send_error',
+              error: errorMessage,
+            });
+          }
+        }
       }
     } else {
       for (const recipientUid of uniqueRecipientUids) {
