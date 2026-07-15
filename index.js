@@ -260,6 +260,8 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     const details = [];
 
     const clientData = data || {};
+    const localizedTitleEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'title_ar' || key === 'title_en' || key === 'title_fr');
+    const localizedBodyEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'body_ar' || key === 'body_en' || key === 'body_fr');
 
     const defaultData = {
       notificationType: clientData.notificationType || 'admin_message',
@@ -289,70 +291,61 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       ]),
     );
 
-    // ✅ Ensure all language variants are available (fallback to default title/body)
-    const titleAr = requestBody.title_ar?.trim() || title.trim();
-    const titleEn = requestBody.title_en?.trim() || title.trim();
-    const titleFr = requestBody.title_fr?.trim() || title.trim();
-    const bodyAr = requestBody.body_ar?.trim() || body.trim();
-    const bodyEn = requestBody.body_en?.trim() || body.trim();
-    const bodyFr = requestBody.body_fr?.trim() || body.trim();
+    const localizedTitleData = Object.fromEntries(
+      localizedTitleEntries.map(([key, value]) => [`title_${key.split('_').pop()}`, value])
+    );
+    const localizedBodyData = Object.fromEntries(
+      localizedBodyEntries.map(([key, value]) => [`body_${key.split('_').pop()}`, value])
+    );
 
-    const localizedTitleData = {
-      title_ar: titleAr,
-      title_en: titleEn,
-      title_fr: titleFr,
-    };
-    const localizedBodyData = {
-      body_ar: bodyAr,
-      body_en: bodyEn,
-      body_fr: bodyFr,
+    const messagePayload = {
+      notification: {
+        title: title.trim(),
+        body: body.trim(),
+        ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+      },
+      data: {
+        title: title.trim(),
+        body: body.trim(),
+        ...localizedTitleData,
+        ...localizedBodyData,
+        ...sanitizedData,
+        ...topLevelNotificationData,
+      },
+      android: {
+        priority: 'high',
+            ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+        notification: {
+          ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
+        },
+      },
+      apns: {
+        headers: {
+          'apns-priority': '10',
+        },
+        payload: {
+          aps: {
+            contentAvailable: true,
+            sound: 'default',
+          },
+        },
+      },
     };
 
-    // 📸 Debug: Log the attachment image URL
+    // 📸 Debug: Log the Android notification with image URL
     if (attachmentImageUrl) {
-      console.log(`📸 Notification with image: ${attachmentImageUrl}`);
+      console.log(`📸 Android notification with image: ${attachmentImageUrl}`);
     }
 
     if (hasTopicTarget) {
       try {
-        // For topics, use Arabic by default
-        const topicNotificationTitle = titleAr;
-        const topicNotificationBody = bodyAr;
-
         const topicMessage = {
+          ...messagePayload,
           topic: topicName,
-          notification: {
-            title: topicNotificationTitle,
-            body: topicNotificationBody,
-            ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-          },
-          data: {
-            title: title.trim(),
-            body: body.trim(),
-            ...localizedTitleData,
-            ...localizedBodyData,
-            ...sanitizedData,
-            ...topLevelNotificationData,
-          },
-          android: {
-            priority: 'high',
-            ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-          },
-          apns: {
-            headers: {
-              'apns-priority': '10',
-            },
-            payload: {
-              aps: {
-                contentAvailable: true,
-                sound: 'default',
-              },
-            },
-          },
         };
 
         console.log(`📤 Sending topic message to '${topicName}'`);
-        console.log(`📋 Title: ${topicNotificationTitle}, Body: ${topicNotificationBody}`);
+        console.log(`📋 Payload: ${JSON.stringify(topicMessage)}`);
 
         const fallbackResult = await sendFcmWithFallback(topicMessage, `topic:${topicName}`);
         totalSuccess += 1;
@@ -381,10 +374,6 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 
         const userData = userDoc.data() || {};
         const deviceTokens = normalizeDeviceTokens(userData);
-        
-        // 🌍 Extract user's language preference from Firestore (default to 'ar')
-        const userLanguage = (userData.language || userData.locale || 'ar').toLowerCase().substring(0, 2);
-        console.log(`🌍 User ${recipientUid} language: ${userLanguage}`);
 
         console.log(`📱 User ${recipientUid} has ${deviceTokens.length} tokens`);
 
@@ -398,51 +387,13 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
           let userFailureCount = 0;
 
           for (const token of deviceTokens) {
-            // 🎯 Build localized payload for this specific user
-            const notificationTitle = userLanguage === 'ar' ? titleAr : (userLanguage === 'en' ? titleEn : titleFr);
-            const notificationBody = userLanguage === 'ar' ? bodyAr : (userLanguage === 'en' ? bodyEn : bodyFr);
-
-            console.log(`\n🎯 Building payload for user ${recipientUid} (${userLanguage}):`);
-            console.log(`   Final title: ${notificationTitle}`);
-            console.log(`   Final body: ${notificationBody}`);
-
             const singleMessage = {
+              ...messagePayload,
               token,
-              notification: {
-                title: notificationTitle,
-                body: notificationBody,
-                ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-              },
-              data: {
-                title: title.trim(),
-                body: body.trim(),
-                ...localizedTitleData,
-                ...localizedBodyData,
-                ...sanitizedData,
-                ...topLevelNotificationData,
-              },
-              android: {
-                priority: 'high',
-              },
-              apns: {
-                headers: {
-                  'apns-priority': '10',
-                },
-                payload: {
-                  aps: {
-                    contentAvailable: true,
-                    sound: 'default',
-                    alert: {
-                      title: notificationTitle,
-                      body: notificationBody,
-                    },
-                  },
-                },
-              },
             };
 
             try {
-              console.log(`📤 Sending FCM to ${recipientUid} (${userLanguage}): "${notificationTitle}"`);
+              console.log(`📤 Sending FCM to token for ${recipientUid}`);
               const fallbackResult = await sendFcmWithFallback(singleMessage, `user:${recipientUid}`);
               totalTokens += 1;
               totalSuccess += 1;
