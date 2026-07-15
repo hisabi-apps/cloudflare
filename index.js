@@ -316,7 +316,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
         priority: 'high',
         notification: {
           ...(attachmentImageUrl ? { image: attachmentImageUrl } : {}),
-          channelId: 'high-importance-channel',
+          channelId: 'high_importance_channel',
         },
       },
       apns: {
