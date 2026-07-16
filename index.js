@@ -27,7 +27,26 @@ function resolveNotificationMetadata(requestBody = {}) {
         ? requestBody.notificationType.trim()
         : 'admin_message';
 
-  const isImportant = Boolean(clientData.isImportant ?? requestBody?.isImportant);
+  const parseBooleanLike = (value) => {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const normalizedValue = value.trim().toLowerCase();
+      if (normalizedValue === 'true' || normalizedValue === '1' || normalizedValue === 'yes' || normalizedValue === 'on') {
+        return true;
+      }
+
+      if (normalizedValue === 'false' || normalizedValue === '0' || normalizedValue === 'no' || normalizedValue === 'off') {
+        return false;
+      }
+    }
+
+    return false;
+  };
+
+  const isImportant = parseBooleanLike(clientData.isImportant ?? requestBody?.isImportant);
 
   return {
     category,
