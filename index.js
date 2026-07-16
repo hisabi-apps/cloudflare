@@ -9,7 +9,32 @@ const NodeCache = require('node-cache');
 const axios = require('axios');
 const { GoogleAuth } = require('google-auth-library');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const { resolveNotificationMetadata } = require('./notification_metadata');
+
+function resolveNotificationMetadata(requestBody = {}) {
+  const clientData = requestBody?.data && typeof requestBody.data === 'object' ? requestBody.data : {};
+
+  const category =
+    typeof clientData.category === 'string' && clientData.category.trim() !== ''
+      ? clientData.category.trim()
+      : typeof requestBody?.category === 'string' && requestBody.category.trim() !== ''
+        ? requestBody.category.trim()
+        : 'general';
+
+  const notificationType =
+    typeof clientData.notificationType === 'string' && clientData.notificationType.trim() !== ''
+      ? clientData.notificationType.trim()
+      : typeof requestBody?.notificationType === 'string' && requestBody.notificationType.trim() !== ''
+        ? requestBody.notificationType.trim()
+        : 'admin_message';
+
+  const isImportant = Boolean(clientData.isImportant ?? requestBody?.isImportant);
+
+  return {
+    category,
+    notificationType,
+    isImportant,
+  };
+}
 
 // -------------------- Firebase Admin SDK --------------------
 const admin = require('firebase-admin');
@@ -1461,13 +1486,20 @@ app.get('/', (req, res) => {
 });
 
 // -------------------- تشغيل الخادم --------------------
-app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log('📌 New API endpoints:');
-  console.log('  GET  /api/subjects?year=&state=&specialty=&fileYear=');
-  console.log('  GET  /api/files?subject=...&page=1&limit=20');
-  console.log('  PATCH /api/moderate/:id');
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on http://localhost:${PORT}`);
+    console.log('📌 New API endpoints:');
+    console.log('  GET  /api/subjects?year=&state=&specialty=&fileYear=');
+    console.log('  GET  /api/files?subject=...&page=1&limit=20');
+    console.log('  PATCH /api/moderate/:id');
+  });
+}
+
+module.exports = {
+  resolveNotificationMetadata,
+  app,
+};
 // -------------------- جلب الملفات المعلقة للمراجعة --------------------
 app.get('/api/pending', async (req, res) => {
   try {
