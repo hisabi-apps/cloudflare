@@ -182,17 +182,18 @@ async function persistAdminNotificationToUsers({
     summary_ar: typeof requestBody?.summary_ar === 'string' && requestBody.summary_ar.trim() !== '' ? requestBody.summary_ar.trim() : (typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : ''),
     summary_en: typeof requestBody?.summary_en === 'string' && requestBody.summary_en.trim() !== '' ? requestBody.summary_en.trim() : (typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : ''),
     summary_fr: typeof requestBody?.summary_fr === 'string' && requestBody.summary_fr.trim() !== '' ? requestBody.summary_fr.trim() : (typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : ''),
-    secondaryText_ar: typeof requestBody?.secondaryText_ar === 'string' && requestBody.secondaryText_ar.trim() !== '' ? requestBody.secondaryText_ar.trim() : '',
-    secondaryText_en: typeof requestBody?.secondaryText_en === 'string' && requestBody.secondaryText_en.trim() !== '' ? requestBody.secondaryText_en.trim() : '',
-    secondaryText_fr: typeof requestBody?.secondaryText_fr === 'string' && requestBody.secondaryText_fr.trim() !== '' ? requestBody.secondaryText_fr.trim() : '',
-    linkText_ar: typeof requestBody?.linkText_ar === 'string' && requestBody.linkText_ar.trim() !== '' ? requestBody.linkText_ar.trim() : '',
-    linkText_en: typeof requestBody?.linkText_en === 'string' && requestBody.linkText_en.trim() !== '' ? requestBody.linkText_en.trim() : '',
-    linkText_fr: typeof requestBody?.linkText_fr === 'string' && requestBody.linkText_fr.trim() !== '' ? requestBody.linkText_fr.trim() : '',
+    secondaryText_ar: typeof requestBody?.secondaryText_ar === 'string' && requestBody.secondaryText_ar.trim() !== '' ? requestBody.secondaryText_ar.trim() : (typeof requestBody?.secondaryText === 'string' ? requestBody.secondaryText.trim() : ''),
+    secondaryText_en: typeof requestBody?.secondaryText_en === 'string' && requestBody.secondaryText_en.trim() !== '' ? requestBody.secondaryText_en.trim() : (typeof requestBody?.secondaryText === 'string' ? requestBody.secondaryText.trim() : ''),
+    secondaryText_fr: typeof requestBody?.secondaryText_fr === 'string' && requestBody.secondaryText_fr.trim() !== '' ? requestBody.secondaryText_fr.trim() : (typeof requestBody?.secondaryText === 'string' ? requestBody.secondaryText.trim() : ''),
+    linkText_ar: typeof requestBody?.linkText_ar === 'string' && requestBody.linkText_ar.trim() !== '' ? requestBody.linkText_ar.trim() : (typeof requestBody?.linkText === 'string' ? requestBody.linkText.trim() : ''),
+    linkText_en: typeof requestBody?.linkText_en === 'string' && requestBody.linkText_en.trim() !== '' ? requestBody.linkText_en.trim() : (typeof requestBody?.linkText === 'string' ? requestBody.linkText.trim() : ''),
+    linkText_fr: typeof requestBody?.linkText_fr === 'string' && requestBody.linkText_fr.trim() !== '' ? requestBody.linkText_fr.trim() : (typeof requestBody?.linkText === 'string' ? requestBody.linkText.trim() : ''),
     summary: typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : '',
     secondaryText: typeof requestBody?.secondaryText === 'string' ? requestBody.secondaryText.trim() : '',
     linkText: typeof requestBody?.linkText === 'string' ? requestBody.linkText.trim() : '',
-    linkUrl,
+    linkUrl: typeof requestBody?.linkUrl === 'string' ? requestBody.linkUrl.trim() : linkUrl,
     inlineLinks,
+    elementOrder: typeof requestBody?.elementOrder === 'string' && requestBody.elementOrder.trim() !== '' ? requestBody.elementOrder.trim() : 'text_button_image',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     isRead: false,
     type: 'admin_message',
@@ -214,6 +215,10 @@ async function persistAdminNotificationToUsers({
     payload.attachmentImageLinkUrl = attachmentImageLinkUrl || '';
     payload.attachmentImageWidth = imageWidth || null;
     payload.attachmentImageHeight = imageHeight || null;
+  }
+
+  if (typeof requestBody?.attachmentImageLinkUrl === 'string' && requestBody.attachmentImageLinkUrl.trim() !== '') {
+    payload.attachmentImageLinkUrl = requestBody.attachmentImageLinkUrl.trim();
   }
 
   if (notificationIconUrl) {
