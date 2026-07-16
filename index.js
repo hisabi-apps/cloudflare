@@ -9,6 +9,7 @@ const NodeCache = require('node-cache');
 const axios = require('axios');
 const { GoogleAuth } = require('google-auth-library');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { resolveNotificationMetadata } = require('./notification_metadata');
 
 // -------------------- Firebase Admin SDK --------------------
 const admin = require('firebase-admin');
@@ -163,10 +164,7 @@ async function persistAdminNotificationToUsers({
 
   const titleText = typeof title === 'string' ? title.trim() : '';
   const bodyText = typeof body === 'string' ? body.trim() : '';
-  const category = typeof requestBody?.category === 'string' && requestBody.category.trim() !== ''
-    ? requestBody.category.trim()
-    : 'general';
-  const isImportant = Boolean(requestBody?.isImportant);
+  const { category, notificationType, isImportant } = resolveNotificationMetadata(requestBody);
   const linkUrl = typeof requestBody?.linkUrl === 'string' ? requestBody.linkUrl.trim() : '';
   const inlineLinks = Array.isArray(requestBody?.inlineLinks) ? requestBody.inlineLinks : [];
 
@@ -196,7 +194,7 @@ async function persistAdminNotificationToUsers({
     elementOrder: typeof requestBody?.elementOrder === 'string' && requestBody.elementOrder.trim() !== '' ? requestBody.elementOrder.trim() : 'text_button_image',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     isRead: false,
-    type: 'admin_message',
+    type: notificationType,
     category,
     isImportant,
     createdBy: senderUid || '',
@@ -503,10 +501,12 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
     const clientData = data || {};
     const localizedTitleEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'title_ar' || key === 'title_en' || key === 'title_fr');
     const localizedBodyEntries = Object.entries(requestBody || {}).filter(([key]) => key === 'body_ar' || key === 'body_en' || key === 'body_fr');
+    const { category, notificationType, isImportant } = resolveNotificationMetadata(requestBody);
 
     const defaultData = {
-      notificationType: clientData.notificationType || 'admin_message',
-      category: clientData.category || 'general',
+      notificationType,
+      category,
+      isImportant,
       target: clientData.target || 'all',
       sentBatchId: clientData.sentBatchId || '',
       topicName: clientData.topicName || '',
