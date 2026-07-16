@@ -233,8 +233,17 @@ async function persistAdminNotificationToUsers({
   let writesInBatch = 0;
 
   for (const uid of normalizedUids) {
-    const notificationRef = db.collection('users').doc(uid).collection('notifications').doc();
-    batch.set(notificationRef, { id: notificationRef.id, ...payload });
+    const safeSentBatchId = typeof sentBatchId === 'string' && sentBatchId.trim() !== ''
+      ? sentBatchId.trim()
+      : `${senderUid || 'admin'}_${Date.now()}`;
+    const notificationDocId = `${safeSentBatchId}_${uid}`;
+    const notificationRef = db
+      .collection('users')
+      .doc(uid)
+      .collection('notifications')
+      .doc(notificationDocId);
+
+    batch.set(notificationRef, { id: notificationDocId, ...payload }, { merge: true });
     writesInBatch += 1;
 
     if (writesInBatch >= batchLimit) {
