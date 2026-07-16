@@ -825,11 +825,14 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
       }
     }
 
-    console.log(`✅ Admin FCM completed: totalTokens=${totalTokens}, totalSuccess=${totalSuccess}`);
+    const persistedCount = recipientsToPersist.length;
+
+    console.log(`✅ Admin FCM completed: totalTokens=${totalTokens}, totalSuccess=${totalSuccess}, persistedCount=${persistedCount}`);
     return res.json({
       success: true,
       recipients: uniqueRecipientUids.length,
       topic: topicName,
+      sentCount: persistedCount,
       totalTokens,
       totalSuccess,
       details,
