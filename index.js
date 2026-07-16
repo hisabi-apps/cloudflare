@@ -129,6 +129,128 @@ function getLocalizedField(requestBody, field, lang) {
   return '';
 }
 
+async function persistAdminNotificationToUsers({
+  recipientUids,
+  requestBody,
+  senderUid,
+  title,
+  body,
+  sentBatchId,
+  topicName,
+  attachmentImageUrl,
+  notificationIconUrl,
+  attachmentImageName,
+  attachmentImageType,
+  attachmentImageLinkUrl,
+  attachmentFileUrl,
+  attachmentFileName,
+  attachmentFileType,
+  attachmentName,
+  attachmentType,
+  imageWidth,
+  imageHeight,
+}) {
+  const normalizedUids = [...new Set(
+    (recipientUids || [])
+      .filter((uid) => typeof uid === 'string' && uid.trim() !== '')
+      .map((uid) => uid.trim())
+      .filter((uid) => uid !== senderUid),
+  )];
+
+  if (normalizedUids.length === 0) {
+    return 0;
+  }
+
+  const titleText = typeof title === 'string' ? title.trim() : '';
+  const bodyText = typeof body === 'string' ? body.trim() : '';
+  const category = typeof requestBody?.category === 'string' && requestBody.category.trim() !== ''
+    ? requestBody.category.trim()
+    : 'general';
+  const isImportant = Boolean(requestBody?.isImportant);
+  const linkUrl = typeof requestBody?.linkUrl === 'string' ? requestBody.linkUrl.trim() : '';
+  const inlineLinks = Array.isArray(requestBody?.inlineLinks) ? requestBody.inlineLinks : [];
+
+  const payload = {
+    title: titleText,
+    message: bodyText,
+    title_ar: typeof requestBody?.title_ar === 'string' && requestBody.title_ar.trim() !== '' ? requestBody.title_ar.trim() : titleText,
+    title_en: typeof requestBody?.title_en === 'string' && requestBody.title_en.trim() !== '' ? requestBody.title_en.trim() : titleText,
+    title_fr: typeof requestBody?.title_fr === 'string' && requestBody.title_fr.trim() !== '' ? requestBody.title_fr.trim() : titleText,
+    message_ar: typeof requestBody?.body_ar === 'string' && requestBody.body_ar.trim() !== '' ? requestBody.body_ar.trim() : bodyText,
+    message_en: typeof requestBody?.body_en === 'string' && requestBody.body_en.trim() !== '' ? requestBody.body_en.trim() : bodyText,
+    message_fr: typeof requestBody?.body_fr === 'string' && requestBody.body_fr.trim() !== '' ? requestBody.body_fr.trim() : bodyText,
+    summary_ar: typeof requestBody?.summary_ar === 'string' && requestBody.summary_ar.trim() !== '' ? requestBody.summary_ar.trim() : (typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : ''),
+    summary_en: typeof requestBody?.summary_en === 'string' && requestBody.summary_en.trim() !== '' ? requestBody.summary_en.trim() : (typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : ''),
+    summary_fr: typeof requestBody?.summary_fr === 'string' && requestBody.summary_fr.trim() !== '' ? requestBody.summary_fr.trim() : (typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : ''),
+    secondaryText_ar: typeof requestBody?.secondaryText_ar === 'string' && requestBody.secondaryText_ar.trim() !== '' ? requestBody.secondaryText_ar.trim() : '',
+    secondaryText_en: typeof requestBody?.secondaryText_en === 'string' && requestBody.secondaryText_en.trim() !== '' ? requestBody.secondaryText_en.trim() : '',
+    secondaryText_fr: typeof requestBody?.secondaryText_fr === 'string' && requestBody.secondaryText_fr.trim() !== '' ? requestBody.secondaryText_fr.trim() : '',
+    linkText_ar: typeof requestBody?.linkText_ar === 'string' && requestBody.linkText_ar.trim() !== '' ? requestBody.linkText_ar.trim() : '',
+    linkText_en: typeof requestBody?.linkText_en === 'string' && requestBody.linkText_en.trim() !== '' ? requestBody.linkText_en.trim() : '',
+    linkText_fr: typeof requestBody?.linkText_fr === 'string' && requestBody.linkText_fr.trim() !== '' ? requestBody.linkText_fr.trim() : '',
+    summary: typeof requestBody?.summary === 'string' ? requestBody.summary.trim() : '',
+    secondaryText: typeof requestBody?.secondaryText === 'string' ? requestBody.secondaryText.trim() : '',
+    linkText: typeof requestBody?.linkText === 'string' ? requestBody.linkText.trim() : '',
+    linkUrl,
+    inlineLinks,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    isRead: false,
+    type: 'admin_message',
+    category,
+    isImportant,
+    createdBy: senderUid || '',
+    sentBatchId: sentBatchId || '',
+    target: topicName && topicName === 'all_users' ? 'all' : 'custom',
+    topicName: topicName || '',
+    expiresAt: typeof requestBody?.expiresAt === 'string' && requestBody.expiresAt.trim() !== ''
+      ? admin.firestore.Timestamp.fromDate(new Date(requestBody.expiresAt))
+      : null,
+  };
+
+  if (attachmentImageUrl) {
+    payload.attachmentImageUrl = attachmentImageUrl;
+    payload.attachmentImageName = attachmentImageName || 'image';
+    payload.attachmentImageType = attachmentImageType || 'image';
+    payload.attachmentImageLinkUrl = attachmentImageLinkUrl || '';
+    payload.attachmentImageWidth = imageWidth || null;
+    payload.attachmentImageHeight = imageHeight || null;
+  }
+
+  if (notificationIconUrl) {
+    payload.notificationIconUrl = notificationIconUrl;
+  }
+
+  if (attachmentFileUrl) {
+    payload.attachmentFileUrl = attachmentFileUrl;
+    payload.attachmentFileName = attachmentFileName || 'file';
+    payload.attachmentFileType = attachmentFileType || 'file';
+    payload.attachmentName = attachmentName || attachmentFileName || 'file';
+    payload.attachmentType = attachmentType || attachmentFileType || 'file';
+  }
+
+  const batchLimit = 450;
+  let batch = db.batch();
+  let writesInBatch = 0;
+
+  for (const uid of normalizedUids) {
+    const notificationRef = db.collection('users').doc(uid).collection('notifications').doc();
+    batch.set(notificationRef, { id: notificationRef.id, ...payload });
+    writesInBatch += 1;
+
+    if (writesInBatch >= batchLimit) {
+      await batch.commit();
+      batch = db.batch();
+      writesInBatch = 0;
+    }
+  }
+
+  if (writesInBatch > 0) {
+    await batch.commit();
+  }
+
+  return normalizedUids.length;
+}
+
 async function sendFcmViaHttp(message) {
   const auth = new GoogleAuth({
     credentials: serviceAccount,
@@ -329,6 +451,36 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
                   .filter((recipient) => recipient.length > 0),
               ),
             ];
+
+    const recipientsToPersist = hasTopicTarget && topicName === 'all_users'
+      ? (await db.collection('users').get()).docs
+          .map((doc) => doc.id)
+          .filter((uid) => uid !== senderUid)
+      : uniqueRecipientUids;
+
+    if (recipientsToPersist.length > 0) {
+      await persistAdminNotificationToUsers({
+        recipientUids: recipientsToPersist,
+        requestBody,
+        senderUid,
+        title,
+        body,
+        sentBatchId: requestBody.sentBatchId || '',
+        topicName,
+        attachmentImageUrl,
+        notificationIconUrl,
+        attachmentImageName: requestBody.attachmentImageName || '',
+        attachmentImageType: requestBody.attachmentImageType || '',
+        attachmentImageLinkUrl: requestBody.attachmentImageLinkUrl || '',
+        attachmentFileUrl: requestBody.attachmentFileUrl || '',
+        attachmentFileName: requestBody.attachmentFileName || '',
+        attachmentFileType: requestBody.attachmentFileType || '',
+        attachmentName: requestBody.attachmentName || '',
+        attachmentType: requestBody.attachmentType || '',
+        imageWidth: requestBody.attachmentImageWidth,
+        imageHeight: requestBody.attachmentImageHeight,
+      });
+    }
 
     let totalTokens = 0;
     let totalSuccess = 0;
