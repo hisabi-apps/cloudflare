@@ -1360,16 +1360,38 @@ app.patch('/api/moderate/:id', async (req, res) => {
           const userData = userDoc.data() || {};
           console.log(`👤 User found: ${userId}, has deviceTokens: ${!!userData.deviceTokens}`);
           const pointsEarned = approved && typeof pointsDelta === 'number' ? pointsDelta : 0;
-          const pointsText = approved && pointsEarned > 0 ? ` +${pointsEarned} نقطة${pointsEarned == 1 ? '' : 'ات'}` : '';
-          const notificationMessage = approved
-            ? `تم قبول ملفك "${fileTitle}" ✅${pointsText}`
+          const pointsTextAr = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned == 1 ? 'نقطة' : 'نقط'}` : '';
+          const pointsTextEn = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned == 1 ? '' : 's'}` : '';
+          const pointsTextFr = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned == 1 ? '' : 's'}` : '';
+
+          const titleAr = approved ? 'ملف مقبول' : 'ملف مرفوض';
+          const titleEn = approved ? 'File approved' : 'File rejected';
+          const titleFr = approved ? 'Fichier approuvé' : 'Fichier refusé';
+
+          const messageAr = approved
+            ? `تم قبول ملفك "${fileTitle}" ✅${pointsTextAr}`
             : `تم رفض ملفك "${fileTitle}" ❌`;
-          
+          const messageEn = approved
+            ? `Your file "${fileTitle}" has been approved ✅${pointsTextEn}`
+            : `Your file "${fileTitle}" has been rejected ❌`;
+          const messageFr = approved
+            ? `Votre fichier "${fileTitle}" a été approuvé ✅${pointsTextFr}`
+            : `Votre fichier "${fileTitle}" a été rejeté ❌`;
+
           const notificationData = {
             type: 'file_moderation',
-            title: approved ? 'ملف مقبول' : 'ملف مرفوض',
-            message: notificationMessage,
+            title: titleAr,
+            title_ar: titleAr,
+            title_en: titleEn,
+            title_fr: titleFr,
+            message: messageAr,
+            message_ar: messageAr,
+            message_en: messageEn,
+            message_fr: messageFr,
             secondaryText: comment || '',
+            secondaryText_ar: comment || '',
+            secondaryText_en: comment || '',
+            secondaryText_fr: comment || '',
             fileId: id,
             fileTitle: fileTitle,
             approved: approved,
@@ -1395,16 +1417,27 @@ app.patch('/api/moderate/:id', async (req, res) => {
           const deviceTokens = normalizeDeviceTokens(userData);
           console.log(`📱 Device tokens count: ${deviceTokens.length}`);
           
+          const userLang = String(userData.language || userData.languageCode || 'ar').trim().toLowerCase();
+          const effectiveLang = ['ar', 'en', 'fr'].includes(userLang) ? userLang : 'ar';
+          const pushTitle = effectiveLang === 'ar' ? titleAr : effectiveLang === 'fr' ? titleFr : titleEn;
+          const pushBody = effectiveLang === 'ar' ? messageAr : effectiveLang === 'fr' ? messageFr : messageEn;
+
           if (Array.isArray(deviceTokens) && deviceTokens.length > 0) {
             const messages = deviceTokens.map(token => ({
               token,
               notification: {
-                title: approved ? 'ملف مقبول' : 'ملف مرفوض',
-                body: notificationMessage,
+                title: pushTitle,
+                body: pushBody,
               },
               data: {
                 fileId: id,
                 approved: approved.toString(),
+                title_ar: titleAr,
+                title_en: titleEn,
+                title_fr: titleFr,
+                message_ar: messageAr,
+                message_en: messageEn,
+                message_fr: messageFr,
               },
               android: {
                 priority: 'high',
