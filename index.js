@@ -1340,6 +1340,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
     const parsedPointsDeltaForUpdate = (pointsDelta == null) ? 0 : Number(pointsDelta);
     if (approved && !Number.isNaN(parsedPointsDeltaForUpdate) && parsedPointsDeltaForUpdate !== 0 && userId) {
       try {
+        console.log(`ℹ️ Attempting to add points: user=${userId}, delta=${parsedPointsDeltaForUpdate}`);
         const userRef = db.collection('users').doc(userId);
         await userRef.set(
           {
@@ -1356,9 +1357,17 @@ app.patch('/api/moderate/:id', async (req, res) => {
           },
           { merge: true },
         );
-        console.log(`✅ Added ${parsedPointsDeltaForUpdate} points for user ${userId}`);
+
+        // Read back the user's points (best-effort) to log the new value for debugging
+        try {
+          const afterUserDoc = await userRef.get();
+          const afterData = afterUserDoc.exists ? (afterUserDoc.data() || {}) : {};
+          console.log(`✅ Added ${parsedPointsDeltaForUpdate} points for user ${userId}. New user.points=${afterData.points}`);
+        } catch (readBackError) {
+          console.log(`✅ Added ${parsedPointsDeltaForUpdate} points for user ${userId}. (Could not read back new points: ${readBackError?.message || readBackError})`);
+        }
       } catch (pointsError) {
-        console.error(`⚠️ Failed to update points for user ${userId}:`, pointsError.message);
+        console.error(`⚠️ Failed to update points for user ${userId}:`, pointsError.message || pointsError);
       }
     }
 
