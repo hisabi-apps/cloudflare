@@ -1329,6 +1329,8 @@ app.patch('/api/moderate/:id', async (req, res) => {
       isApproved: approved,
       reviewStatus: approved ? 'approved' : 'rejected',
       moderationComment: (comment || commentAr || commentEn || commentFr || '') ,
+      pointsDelta: parsedPointsDeltaForUpdate,
+      pointsAwarded: approved ? parsedPointsDeltaForUpdate : 0,
       moderatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
