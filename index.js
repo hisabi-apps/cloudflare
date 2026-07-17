@@ -1325,6 +1325,9 @@ app.patch('/api/moderate/:id', async (req, res) => {
 
     console.log(`📝 Moderating file ${id}: approved=${approved}, userId=${userId}`);
 
+    // تحوّل القيمة الواردة إلى رقم إذا أُرسلت كسلسلة
+    const parsedPointsDeltaForUpdate = (pointsDelta == null) ? 0 : Number(pointsDelta);
+
     const updateData = {
       isApproved: approved,
       reviewStatus: approved ? 'approved' : 'rejected',
@@ -1338,8 +1341,6 @@ app.patch('/api/moderate/:id', async (req, res) => {
     cache.flushAll();
 
     // تحديث نقاط المستخدم عند قبول الملف
-    // تحوّل القيمة الواردة إلى رقم إذا أُرسلت كسلسلة
-    const parsedPointsDeltaForUpdate = (pointsDelta == null) ? 0 : Number(pointsDelta);
     if (approved && !Number.isNaN(parsedPointsDeltaForUpdate) && parsedPointsDeltaForUpdate !== 0 && userId) {
       try {
         console.log(`ℹ️ Attempting to add points: user=${userId}, delta=${parsedPointsDeltaForUpdate}`);
