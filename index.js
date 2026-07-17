@@ -1336,12 +1336,14 @@ app.patch('/api/moderate/:id', async (req, res) => {
     cache.flushAll();
 
     // تحديث نقاط المستخدم عند قبول الملف
-    if (approved && typeof pointsDelta === 'number' && pointsDelta != 0 && userId) {
+    // تحوّل القيمة الواردة إلى رقم إذا أُرسلت كسلسلة
+    const parsedPointsDeltaForUpdate = (pointsDelta == null) ? 0 : Number(pointsDelta);
+    if (approved && !Number.isNaN(parsedPointsDeltaForUpdate) && parsedPointsDeltaForUpdate !== 0 && userId) {
       try {
         const userRef = db.collection('users').doc(userId);
         await userRef.set(
           {
-            points: admin.firestore.FieldValue.increment(pointsDelta),
+            points: admin.firestore.FieldValue.increment(parsedPointsDeltaForUpdate),
             lastPointsUpdate: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
@@ -1350,11 +1352,11 @@ app.patch('/api/moderate/:id', async (req, res) => {
         const userStatsRef = userRef.collection('stats').doc('profile');
         await userStatsRef.set(
           {
-            points: admin.firestore.FieldValue.increment(pointsDelta),
+            points: admin.firestore.FieldValue.increment(parsedPointsDeltaForUpdate),
           },
           { merge: true },
         );
-        console.log(`✅ Added ${pointsDelta} points for user ${userId}`);
+        console.log(`✅ Added ${parsedPointsDeltaForUpdate} points for user ${userId}`);
       } catch (pointsError) {
         console.error(`⚠️ Failed to update points for user ${userId}:`, pointsError.message);
       }
@@ -1370,7 +1372,9 @@ app.patch('/api/moderate/:id', async (req, res) => {
         if (userDoc.exists) {
           const userData = userDoc.data() || {};
           console.log(`👤 User found: ${userId}, has deviceTokens: ${!!userData.deviceTokens}`);
-          const pointsEarned = approved && typeof pointsDelta === 'number' ? pointsDelta : 0;
+          // تأكد من أن pointsDelta رقم حتى لو أرسلت الواجهة القيمة كسلسلة
+          const parsedPointsDelta = (pointsDelta == null) ? 0 : Number(pointsDelta);
+          const pointsEarned = approved && !Number.isNaN(parsedPointsDelta) ? parsedPointsDelta : 0;
           const pointsTextAr = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned == 1 ? 'نقطة' : 'نقط'}` : '';
           const pointsTextEn = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned == 1 ? '' : 's'}` : '';
           const pointsTextFr = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned == 1 ? '' : 's'}` : '';
