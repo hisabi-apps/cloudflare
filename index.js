@@ -1369,14 +1369,14 @@ app.patch('/api/moderate/:id', async (req, res) => {
           const titleFr = approved ? 'Fichier approuvé' : 'Fichier refusé';
 
           const messageAr = approved
-            ? `تم قبول ملفك "${fileTitle}" ✅${pointsTextAr}`
-            : `تم رفض ملفك "${fileTitle}" ❌`;
+            ? `تم قبول ملفك "\u202A${fileTitle}\u202C" ✅\u200F ${pointsTextAr}`
+            : `تم رفض ملفك "\u202A${fileTitle}\u202C" ❌`;
           const messageEn = approved
-            ? `Your file "${fileTitle}" has been approved ✅${pointsTextEn}`
-            : `Your file "${fileTitle}" has been rejected ❌`;
+            ? `Your file "\u202A${fileTitle}\u202C" has been approved ✅ ${pointsTextEn}`
+            : `Your file "\u202A${fileTitle}\u202C" has been rejected ❌`;
           const messageFr = approved
-            ? `Votre fichier "${fileTitle}" a été approuvé ✅${pointsTextFr}`
-            : `Votre fichier "${fileTitle}" a été rejeté ❌`;
+            ? `Votre fichier "\u202A${fileTitle}\u202C" a été approuvé ✅ ${pointsTextFr}`
+            : `Votre fichier "\u202A${fileTitle}\u202C" a été rejeté ❌`;
 
           const notificationData = {
             type: 'file_moderation',
