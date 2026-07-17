@@ -1296,7 +1296,18 @@ app.get('/api/files', async (req, res) => {
 app.patch('/api/moderate/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { approved, comment, pointsDelta } = req.body;
+    // Accept both generic `comment` and localized comment fields from the client
+    const {
+      approved,
+      comment,
+      commentAr,
+      commentEn,
+      commentFr,
+      secondaryText_ar,
+      secondaryText_en,
+      secondaryText_fr,
+      pointsDelta,
+    } = req.body || {};
 
     if (typeof approved !== 'boolean') {
       return res.status(400).json({ error: 'Approved status is required (boolean).' });
@@ -1317,7 +1328,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
     const updateData = {
       isApproved: approved,
       reviewStatus: approved ? 'approved' : 'rejected',
-      moderationComment: comment || '',
+      moderationComment: (comment || commentAr || commentEn || commentFr || '') ,
       moderatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -1378,6 +1389,19 @@ app.patch('/api/moderate/:id', async (req, res) => {
             ? `Votre fichier "\u202A${fileTitle}\u202C" a été approuvé ✅ ${pointsTextFr}`
             : `Votre fichier "\u202A${fileTitle}\u202C" a été rejeté ❌`;
 
+          // Prefer localized secondary/comment fields if provided by client
+          const resolvedSecondaryAr = (typeof secondaryText_ar === 'string' && secondaryText_ar.trim() !== '')
+            ? secondaryText_ar.trim()
+            : (typeof commentAr === 'string' && commentAr.trim() !== '') ? commentAr.trim() : (comment || '');
+
+          const resolvedSecondaryEn = (typeof secondaryText_en === 'string' && secondaryText_en.trim() !== '')
+            ? secondaryText_en.trim()
+            : (typeof commentEn === 'string' && commentEn.trim() !== '') ? commentEn.trim() : (comment || '');
+
+          const resolvedSecondaryFr = (typeof secondaryText_fr === 'string' && secondaryText_fr.trim() !== '')
+            ? secondaryText_fr.trim()
+            : (typeof commentFr === 'string' && commentFr.trim() !== '') ? commentFr.trim() : (comment || '');
+
           const notificationData = {
             type: 'file_moderation',
             title: titleAr,
@@ -1388,15 +1412,15 @@ app.patch('/api/moderate/:id', async (req, res) => {
             message_ar: messageAr,
             message_en: messageEn,
             message_fr: messageFr,
-            secondaryText: comment || '',
-            secondaryText_ar: comment || '',
-            secondaryText_en: comment || '',
-            secondaryText_fr: comment || '',
+            secondaryText: comment || resolvedSecondaryAr || resolvedSecondaryEn || resolvedSecondaryFr || '',
+            secondaryText_ar: resolvedSecondaryAr || '',
+            secondaryText_en: resolvedSecondaryEn || '',
+            secondaryText_fr: resolvedSecondaryFr || '',
             fileId: id,
             fileTitle: fileTitle,
             approved: approved,
             pointsDelta: pointsEarned,
-            comment: comment || '',
+            comment: comment || resolvedSecondaryAr || resolvedSecondaryEn || resolvedSecondaryFr || '',
             // Use `createdAt` and `isRead` to match the Flutter client expectations
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             // keep legacy timestamp too for compatibility
