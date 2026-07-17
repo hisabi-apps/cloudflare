@@ -1183,7 +1183,9 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 app.get('/api/subjects', async (req, res) => {
   try {
     const { year, state, specialty, fileYear, fileYearFrom, fileYearTo } = req.query;
-    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
+    const pageNum = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 100);
+    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}_${pageNum}_${limitNum}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
@@ -1225,8 +1227,26 @@ app.get('/api/subjects', async (req, res) => {
       specialties: Array.from(info.specialties).sort(),
     }));
 
-    cache.set(cacheKey, result);
-    res.json(result);
+    result.sort((a, b) => {
+      const subjectCompare = a.subject.localeCompare(b.subject, 'ar', { sensitivity: 'base' });
+      if (subjectCompare !== 0) {
+        return subjectCompare;
+      }
+      return b.count - a.count;
+    });
+
+    const startIndex = (pageNum - 1) * limitNum;
+    const pagedItems = result.slice(startIndex, startIndex + limitNum);
+    const response = {
+      items: pagedItems,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: startIndex + limitNum < result.length,
+      totalCount: result.length,
+    };
+
+    cache.set(cacheKey, response);
+    res.json(response);
   } catch (error) {
     console.error('Error fetching subjects:', error);
     res.status(500).json({ error: 'Failed to fetch subjects.' });
