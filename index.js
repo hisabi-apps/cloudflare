@@ -1328,6 +1328,7 @@ app.patch('/api/moderate/:id', async (req, res) => {
       secondaryText_en,
       secondaryText_fr,
       pointsDelta,
+      withCorrection,
     } = req.body || {};
 
     if (typeof approved !== 'boolean') {
@@ -1352,9 +1353,10 @@ app.patch('/api/moderate/:id', async (req, res) => {
     const updateData = {
       isApproved: approved,
       reviewStatus: approved ? 'approved' : 'rejected',
-      moderationComment: (comment || commentAr || commentEn || commentFr || '') ,
+      moderationComment: (comment || commentAr || commentEn || commentFr || ''),
       pointsDelta: parsedPointsDeltaForUpdate,
       pointsAwarded: approved ? parsedPointsDeltaForUpdate : 0,
+      withCorrection: Boolean(withCorrection),
       moderatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
