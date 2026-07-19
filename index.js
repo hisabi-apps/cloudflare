@@ -53,6 +53,43 @@ async function getOrComputeFileHash(docSnapshot) {
   }
 }
 
+async function findExistingDuplicate(fileHash, currentFileId = '') {
+  try {
+    const fastQuery = await db.collection('files')
+      .where('fileHash', '==', fileHash)
+      .limit(1)
+      .get();
+
+    if (!fastQuery.empty) {
+      const first = fastQuery.docs[0];
+      if ((currentFileId || '').toString().trim() !== first.id) {
+        return first;
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Fast duplicate lookup failed, falling back to limited scan:', error.message || error);
+  }
+
+  try {
+    const fallbackSnapshot = await db.collection('files').limit(20).get();
+    for (const doc of fallbackSnapshot.docs) {
+      if ((currentFileId || '').toString().trim() === doc.id) {
+        continue;
+      }
+
+      const data = doc.data() || {};
+      const candidateHash = data.fileHash || (await getOrComputeFileHash(doc));
+      if (candidateHash && candidateHash === fileHash) {
+        return doc;
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Fallback duplicate scan failed:', error.message || error);
+  }
+
+  return null;
+}
+
 function resolveNotificationMetadata(requestBody = {}) {
   const clientData = requestBody?.data && typeof requestBody.data === 'object' ? requestBody.data : {};
 
@@ -1130,29 +1167,32 @@ app.post('/check-duplicates', upload.single('file'), async (req, res) => {
     }
 
     const fileHash = computeFileHash(req.file.buffer);
-    const snapshot = await db.collection('files').get();
-
     const matches = [];
-    for (const doc of snapshot.docs) {
-      if ((req.body.currentFileId || '').toString().trim() === doc.id) {
-        continue;
-      }
 
-      const data = doc.data() || {};
-      const candidateHash = await getOrComputeFileHash(doc);
-      if (!candidateHash || candidateHash !== fileHash) {
-        continue;
-      }
+    try {
+      const fastQuery = await db.collection('files')
+        .where('fileHash', '==', fileHash)
+        .limit(10)
+        .get();
 
-      matches.push({
-        id: doc.id,
-        title: data.title || '',
-        subject: data.subject || '',
-        name: data.name || '',
-        uploadedByUid: data.uploadedByUid || '',
-        reviewStatus: data.reviewStatus || '',
-        fileHash: candidateHash,
-      });
+      for (const doc of fastQuery.docs) {
+        if ((req.body.currentFileId || '').toString().trim() === doc.id) {
+          continue;
+        }
+
+        const data = doc.data() || {};
+        matches.push({
+          id: doc.id,
+          title: data.title || '',
+          subject: data.subject || '',
+          name: data.name || '',
+          uploadedByUid: data.uploadedByUid || '',
+          reviewStatus: data.reviewStatus || '',
+          fileHash: data.fileHash || fileHash,
+        });
+      }
+    } catch (error) {
+      console.warn('⚠️ Duplicate preview lookup failed:', error.message || error);
     }
 
     return res.status(200).json(matches);
@@ -1201,17 +1241,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     let docRef = null;
     if (!skipFileRecord) {
       if (!skipDuplicateCheck) {
-        const duplicateSnapshot = await db.collection('files').get();
-        let existingDuplicate = null;
-
-        for (const doc of duplicateSnapshot.docs) {
-          const candidateHash = await getOrComputeFileHash(doc);
-          if (candidateHash && candidateHash === fileHash) {
-            existingDuplicate = doc;
-            break;
-          }
-        }
-
+        const existingDuplicate = await findExistingDuplicate(fileHash, '');
         if (existingDuplicate) {
           const existing = existingDuplicate.data() || {};
           return res.status(409).json({
