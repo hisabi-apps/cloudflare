@@ -15,6 +15,44 @@ function computeFileHash(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
+async function getOrComputeFileHash(docSnapshot) {
+  const data = docSnapshot.data() || {};
+  const existingHash = typeof data.fileHash === 'string' ? data.fileHash.trim() : '';
+  if (existingHash) {
+    return existingHash;
+  }
+
+  const objectKey = typeof data.storagePath === 'string' ? data.storagePath.trim() : '';
+  if (!objectKey) {
+    return '';
+  }
+
+  try {
+    const command = new GetObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: objectKey.replace(/^\/+/, ''),
+    });
+    const response = await s3Client.send(command);
+    const body = response.Body;
+    if (!body) {
+      return '';
+    }
+
+    const chunks = [];
+    for await (const chunk of body) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    const buffer = Buffer.concat(chunks);
+    const hash = computeFileHash(buffer);
+    await docSnapshot.ref.set({ fileHash: hash }, { merge: true });
+    return hash;
+  } catch (error) {
+    console.warn(`⚠️ Failed to compute hash for ${objectKey}:`, error.message || error);
+    return '';
+  }
+}
+
 function resolveNotificationMetadata(requestBody = {}) {
   const clientData = requestBody?.data && typeof requestBody.data === 'object' ? requestBody.data : {};
 
@@ -1085,6 +1123,48 @@ app.post('/delete', express.json(), async (req, res) => {
   }
 });
 
+app.post('/check-duplicates', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded.' });
+    }
+
+    const fileHash = computeFileHash(req.file.buffer);
+    const snapshot = await db.collection('files').get();
+
+    const matches = [];
+    for (const doc of snapshot.docs) {
+      if ((req.body.currentFileId || '').toString().trim() === doc.id) {
+        continue;
+      }
+
+      const data = doc.data() || {};
+      const candidateHash = await getOrComputeFileHash(doc);
+      if (!candidateHash || candidateHash !== fileHash) {
+        continue;
+      }
+
+      matches.push({
+        id: doc.id,
+        title: data.title || '',
+        subject: data.subject || '',
+        name: data.name || '',
+        uploadedByUid: data.uploadedByUid || '',
+        reviewStatus: data.reviewStatus || '',
+        fileHash: candidateHash,
+      });
+    }
+
+    return res.status(200).json(matches);
+  } catch (error) {
+    console.error('Duplicate check failed:', error);
+    return res.status(500).json({
+      error: 'Failed to check duplicates.',
+      details: error.message || String(error),
+    });
+  }
+});
+
 // -------------------- نقطة الرفع (معدلة: إضافة وثيقة جديدة في "files") --------------------
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
@@ -1121,17 +1201,23 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     let docRef = null;
     if (!skipFileRecord) {
       if (!skipDuplicateCheck) {
-        const duplicateCheck = await db.collection('files')
-          .where('fileHash', '==', fileHash)
-          .limit(1)
-          .get();
+        const duplicateSnapshot = await db.collection('files').get();
+        let existingDuplicate = null;
 
-        if (!duplicateCheck.empty) {
-          const existing = duplicateCheck.docs[0].data();
+        for (const doc of duplicateSnapshot.docs) {
+          const candidateHash = await getOrComputeFileHash(doc);
+          if (candidateHash && candidateHash === fileHash) {
+            existingDuplicate = doc;
+            break;
+          }
+        }
+
+        if (existingDuplicate) {
+          const existing = existingDuplicate.data() || {};
           return res.status(409).json({
             error: 'duplicate_file',
             message: 'هذا الملف موجود مسبقاً بنفس المحتوى.',
-            existingFileId: duplicateCheck.docs[0].id,
+            existingFileId: existingDuplicate.id,
             existingTitle: existing.title || 'ملف مكرر',
           });
         }
