@@ -1241,15 +1241,19 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     let docRef = null;
     if (!skipFileRecord) {
       if (!skipDuplicateCheck) {
-        const existingDuplicate = await findExistingDuplicate(fileHash, '');
-        if (existingDuplicate) {
-          const existing = existingDuplicate.data() || {};
-          return res.status(409).json({
-            error: 'duplicate_file',
-            message: 'هذا الملف موجود مسبقاً بنفس المحتوى.',
-            existingFileId: existingDuplicate.id,
-            existingTitle: existing.title || 'ملف مكرر',
-          });
+        try {
+          const existingDuplicate = await findExistingDuplicate(fileHash, '');
+          if (existingDuplicate) {
+            const existing = existingDuplicate.data() || {};
+            return res.status(409).json({
+              error: 'duplicate_file',
+              message: 'هذا الملف موجود مسبقاً بنفس المحتوى.',
+              existingFileId: existingDuplicate.id,
+              existingTitle: existing.title || 'ملف مكرر',
+            });
+          }
+        } catch (duplicateError) {
+          console.warn('⚠️ Duplicate check failed; continuing upload.', duplicateError?.message || duplicateError);
         }
       }
 
