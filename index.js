@@ -669,7 +669,9 @@ app.post('/api/admin/rebuild-stats', async (req, res) => {
 
     approvedFilesSnapshot.forEach((doc) => {
       const data = doc.data() || {};
-      const subject = normalizeText(data.subject || 'عام');
+const rawSubject = (data.subject || 'عام').toString();
+        const subject = normalizeText(rawSubject);
+        const subjectDisplay = rawSubject.trim();
       const yearValue = normalizeStatsFilterValue(data.year || 'all');
       const stateValue = normalizeStatsFilterValue(data.state || 'all');
       const specialtyValue = normalizeStatsFilterValue(data.specialty || 'all');
@@ -701,6 +703,7 @@ app.post('/api/admin/rebuild-stats', async (req, res) => {
         const docId = buildSubjectStatsDocId(combo);
         const existing = statsMap.get(docId) || {
           subject: subject,
+          subjectDisplay: subjectDisplay,
           year: combo.year,
           state: combo.state,
           specialty: combo.specialty,
@@ -738,6 +741,7 @@ app.post('/api/admin/rebuild-stats', async (req, res) => {
       const statsRef = db.collection('subject_stats').doc(docId);
       batch.set(statsRef, {
         subject: value.subject,
+        subjectDisplay: value.subjectDisplay,
         year: value.year,
         state: value.state,
         specialty: value.specialty,
@@ -1358,6 +1362,7 @@ async function updateSubjectStats(fileRecord, delta = 1) {
       const statsRef = db.collection('subject_stats').doc(docId);
       const updatePayload = {
         subject: subjectNormalized,
+        subjectDisplay: subject,
         year: combo.year,
         state: combo.state,
         specialty: combo.specialty,
@@ -1785,7 +1790,7 @@ app.get('/api/subjects', async (req, res) => {
     let items = snapshot.docs.map(doc => {
       const data = doc.data() || {};
       return {
-        subject: data.subject || 'عام',
+        subject: data.subjectDisplay || data.subject || 'عام',
         count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
         specialties: Array.isArray(data.specialties) ? data.specialties : [],
       };
@@ -1900,8 +1905,9 @@ app.get('/api/files', async (req, res) => {
       ? Number(fileYearTo)
       : null;
 
+    const normalizedSubject = normalizeText(subject);
     let query = db.collection('files')
-      .where('subject', '==', subject)
+      .where('subjectNormalized', '==', normalizedSubject)
       .where('isApproved', '==', true);
 
     if (year) query = query.where('year', '==', year);
@@ -2435,7 +2441,11 @@ app.patch('/api/files/:id', async (req, res) => {
     // 2. بناء كائن التحديث (نضيف فقط الحقول المرسلة)
     const updateData = {};
     if (title !== undefined) updateData.title = title.trim();
-    if (subject !== undefined) updateData.subject = subject.trim();
+    if (subject !== undefined) {
+      const trimmedSubject = subject.trim();
+      updateData.subject = trimmedSubject;
+      updateData.subjectNormalized = normalizeText(trimmedSubject);
+    }
     if (year !== undefined) updateData.year = year.trim();
     if (state !== undefined) updateData.state = state.trim();
     if (specialty !== undefined) {
