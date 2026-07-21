@@ -14,6 +14,7 @@ const { shouldBlockDuplicateUpload } = require('./duplicate_policy');
 const { computeTextFingerprint, isTextLikeFile } = require('./content_fingerprint');
 const { buildExerciseFileDocument } = require('./file_doc_builder');
 const { findMatchingDuplicateInDocs } = require('./duplicate_lookup');
+const { findDuplicateBySignatureStore } = require('./duplicate_signature_store');
 
 function computeFileHash(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -59,6 +60,23 @@ async function getOrComputeFileHash(docSnapshot) {
 
 async function findExistingDuplicate(fileHash, currentFileId = '', options = {}) {
   const { fileBuffer, fileName = '', mimeType = '', uploadedByUid = '' } = options;
+
+  try {
+    const signatureDoc = await db.collection('file_signatures').doc(fileHash).get();
+    const signatureMatch = await findDuplicateBySignatureStore({
+      fileHash,
+      currentFileId,
+      getSignatureDoc: async () => signatureDoc,
+      getFileDoc: async (docId) => db.collection('files').doc(docId).get(),
+    });
+
+    if (signatureMatch) {
+      return signatureMatch;
+    }
+  } catch (error) {
+    console.warn('⚠️ Signature-store duplicate lookup failed, falling back to direct scan:', error.message || error);
+  }
+
   try {
     const fastQuery = await db.collection('files')
       .where('fileHash', '==', fileHash)
@@ -1182,19 +1200,17 @@ app.post('/check-duplicates', upload.single('file'), async (req, res) => {
     const matches = [];
 
     try {
-      const fastQuery = await db.collection('files')
-        .where('fileHash', '==', fileHash)
-        .limit(10)
-        .get();
+      const signatureMatch = await findDuplicateBySignatureStore({
+        fileHash,
+        currentFileId: (req.body.currentFileId || '').toString().trim(),
+        getSignatureDoc: async () => db.collection('file_signatures').doc(fileHash).get(),
+        getFileDoc: async (docId) => db.collection('files').doc(docId).get(),
+      });
 
-      for (const doc of fastQuery.docs) {
-        if ((req.body.currentFileId || '').toString().trim() === doc.id) {
-          continue;
-        }
-
-        const data = doc.data() || {};
+      if (signatureMatch) {
+        const data = signatureMatch.data() || {};
         matches.push({
-          id: doc.id,
+          id: signatureMatch.id,
           title: data.title || '',
           subject: data.subject || '',
           name: data.name || '',
@@ -1328,6 +1344,17 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       });
 
       docRef = await db.collection('files').add(newFileDoc);
+
+      if (docRef && fileHash) {
+        await db.collection('file_signatures').doc(fileHash).set(
+          {
+            fileHash,
+            relatedFileIds: FieldValue.arrayUnion(docRef.id),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
     }
 
     // 4. مسح الكاش
