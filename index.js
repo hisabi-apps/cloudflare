@@ -1786,7 +1786,7 @@ app.get('/api/subjects', async (req, res) => {
     }
 
     let query = db.collection('subject_stats');
-      const yearFilter = year ? normalizeStatsFilterValue(year) : null;
+    const yearFilter = year ? normalizeStatsFilterValue(year) : null;
     const stateFilter = state ? normalizeStatsFilterValue(state) : null;
     const specialtyFilter = specialty ? normalizeStatsFilterValue(specialty) : null;
     const fileYearFilter = fileYear != null && fileYear !== '' && !Number.isNaN(Number(fileYear))
@@ -1828,24 +1828,46 @@ app.get('/api/subjects', async (req, res) => {
       };
     });
 
-    if (snapshot.empty && pageNum === 1) {
+    const shouldUseFallback = snapshot.empty || (items.length === 0 && pageNum === 1);
+    if (shouldUseFallback) {
       console.log('⚠️ subject_stats is empty; falling back to files aggregation for /api/subjects');
-      let fallbackQuery = db.collection('files').where('isApproved', '==', true);
-      if (yearFilter) fallbackQuery = fallbackQuery.where('year', '==', yearFilter);
-      if (stateFilter) fallbackQuery = fallbackQuery.where('state', '==', stateFilter);
-      if (fileYearFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '==', fileYearFilter);
-      if (fileYearFromFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '>=', fileYearFromFilter);
-      if (fileYearToFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '<=', fileYearToFilter);
-      const fallbackSnapshot = await fallbackQuery.get();
+      const fallbackSnapshot = await db.collection('files').where('isApproved', '==', true).get();
       const subjectMap = new Map();
-      const normalizedSpecialtyFilter = specialtyFilter;
+      const normalizedSpecialtyFilter = specialtyFilter && specialtyFilter !== 'all' ? specialtyFilter : null;
+
       fallbackSnapshot.forEach(doc => {
         const data = doc.data() || {};
-        const specialtyValue = normalizeText((data.specialty || '').toString());
-        if (normalizedSpecialtyFilter && specialtyValue !== normalizedSpecialtyFilter) {
+        const subjectName = (data.subject || 'عام').toString().trim();
+        if (!subjectName) return;
+
+        const fileYearRaw = data.fileYear;
+        const fileYearValue = typeof fileYearRaw === 'number' || !Number.isNaN(Number(fileYearRaw))
+          ? Number(fileYearRaw)
+          : null;
+        const matchesYear = yearFilter && yearFilter !== 'all'
+          ? normalizeText((data.year || '').toString()) === yearFilter
+          : true;
+        const matchesState = stateFilter && stateFilter !== 'all'
+          ? normalizeText((data.state || '').toString()) === stateFilter
+          : true;
+        const matchesSpecialty = normalizedSpecialtyFilter
+          ? normalizeText((data.specialty || '').toString()) === normalizedSpecialtyFilter
+          : true;
+        const matchesFileYearExact = fileYearFilter != null
+          ? fileYearValue === fileYearFilter
+          : true;
+        const matchesFileYearFrom = fileYearFromFilter != null
+          ? (fileYearValue == null ? false : fileYearValue >= fileYearFromFilter)
+          : true;
+        const matchesFileYearTo = fileYearToFilter != null
+          ? (fileYearValue == null ? false : fileYearValue <= fileYearToFilter)
+          : true;
+
+        if (!matchesYear || !matchesState || !matchesSpecialty || !matchesFileYearExact || !matchesFileYearFrom || !matchesFileYearTo) {
           return;
         }
-        const subjectName = data.subject || 'عام';
+
+        const specialtyValue = normalizeText((data.specialty || '').toString());
         const key = subjectName;
         if (!subjectMap.has(key)) {
           subjectMap.set(key, { count: 0, specialties: new Set() });
@@ -1856,6 +1878,7 @@ app.get('/api/subjects', async (req, res) => {
           entry.specialties.add(specialtyValue);
         }
       });
+
       items = Array.from(subjectMap.entries()).map(([subjectName, info]) => ({
         subject: subjectName,
         count: info.count,
