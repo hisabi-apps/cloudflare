@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const { GoogleAuth } = require('google-auth-library');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { shouldBlockDuplicateUpload } = require('./duplicate_policy');
+const { computeTextFingerprint, isTextLikeFile } = require('./content_fingerprint');
 
 function computeFileHash(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -54,7 +55,8 @@ async function getOrComputeFileHash(docSnapshot) {
   }
 }
 
-async function findExistingDuplicate(fileHash, currentFileId = '') {
+async function findExistingDuplicate(fileHash, currentFileId = '', options = {}) {
+  const { fileBuffer, fileName = '', mimeType = '', uploadedByUid = '' } = options;
   try {
     const fastQuery = await db.collection('files')
       .where('fileHash', '==', fileHash)
@@ -82,6 +84,16 @@ async function findExistingDuplicate(fileHash, currentFileId = '') {
       const candidateHash = data.fileHash || (await getOrComputeFileHash(doc));
       if (candidateHash && candidateHash === fileHash) {
         return doc;
+      }
+
+      if (fileBuffer && isTextLikeFile(fileName, mimeType)) {
+        const candidateTextFingerprint = typeof data.textFingerprint === 'string' ? data.textFingerprint : '';
+        if (candidateTextFingerprint) {
+          const currentTextFingerprint = computeTextFingerprint(fileBuffer.toString('utf8'));
+          if (currentTextFingerprint && currentTextFingerprint === candidateTextFingerprint) {
+            return doc;
+          }
+        }
       }
     }
   } catch (error) {
@@ -1243,7 +1255,12 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     if (!skipFileRecord) {
       if (!skipDuplicateCheck) {
         try {
-          const existingDuplicate = await findExistingDuplicate(fileHash, '');
+          const existingDuplicate = await findExistingDuplicate(fileHash, '', {
+            fileBuffer: req.file.buffer,
+            fileName: req.file.originalname,
+            mimeType: req.file.mimetype,
+            uploadedByUid,
+          });
           if (existingDuplicate) {
             const existing = existingDuplicate.data() || {};
             const shouldBlock = shouldBlockDuplicateUpload({
@@ -1296,10 +1313,15 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         uploadedByUid,
         uploadedByEmail: req.body.uploadedByEmail || '',
         fileHash,
+        textFingerprint,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
       // إضافة الحقول الاختيارية
+      const textFingerprint = isTextLikeFile(req.file.originalname, req.file.mimetype)
+        ? computeTextFingerprint(fileBuffer.toString('utf8'))
+        : '';
+
       const optionalFields = ['year', 'state', 'specialty', 'fileYear', 'system', 'semester'];
       for (const field of optionalFields) {
         if (req.body[field]) {
