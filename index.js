@@ -10,6 +10,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { GoogleAuth } = require('google-auth-library');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { shouldBlockDuplicateUpload } = require('./duplicate_policy');
 
 function computeFileHash(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -1245,12 +1246,22 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           const existingDuplicate = await findExistingDuplicate(fileHash, '');
           if (existingDuplicate) {
             const existing = existingDuplicate.data() || {};
-            return res.status(409).json({
-              error: 'duplicate_file',
-              message: 'هذا الملف موجود مسبقاً بنفس المحتوى.',
-              existingFileId: existingDuplicate.id,
-              existingTitle: existing.title || 'ملف مكرر',
+            const shouldBlock = shouldBlockDuplicateUpload({
+              existingUploadedByUid: existing.uploadedByUid || '',
+              currentUploadedByUid: uploadedByUid,
             });
+
+            if (shouldBlock) {
+              return res.status(409).json({
+                error: 'duplicate_file',
+                message: 'هذا الملف موجود مسبقاً بنفس المحتوى من نفس المستخدم.',
+                existingFileId: existingDuplicate.id,
+                existingTitle: existing.title || 'ملف مكرر',
+                duplicateMode: 'same_user_block',
+              });
+            }
+
+            console.log(`ℹ️ Allowed duplicate upload for ${uploadedByUid} because the existing match belongs to a different uploader.`);
           }
         } catch (duplicateError) {
           console.warn('⚠️ Duplicate check failed; continuing upload.', duplicateError?.message || duplicateError);
