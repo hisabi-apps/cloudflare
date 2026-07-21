@@ -2407,7 +2407,7 @@ app.get('/api/pending', async (req, res) => {
     res.json(response);
   } catch (error) {
     console.error('Error fetching pending files:', error);
-    res.status(500).json({ error: 'Failed to fetch pending files.' });
+    res.status(500).json({ error: 'Failed to fetch pending files.', details: error.message });
   }
 });
 
