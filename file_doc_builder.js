@@ -22,6 +22,7 @@ function buildExerciseFileDocument({
 }) {
   const newFileDoc = {
     subject: subject.trim(),
+    subjectNormalized: normalizeText(subject),
     title: title.trim(),
     name,
     url,
