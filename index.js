@@ -1830,7 +1830,7 @@ app.get('/api/subjects', async (req, res) => {
 
     if (snapshot.empty && pageNum === 1) {
       console.log('⚠️ subject_stats is empty; falling back to files aggregation for /api/subjects');
-      const fallbackQuery = db.collection('files').where('isApproved', '==', true);
+      let fallbackQuery = db.collection('files').where('isApproved', '==', true);
       if (yearFilter) fallbackQuery = fallbackQuery.where('year', '==', yearFilter);
       if (stateFilter) fallbackQuery = fallbackQuery.where('state', '==', stateFilter);
       if (fileYearFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '==', fileYearFilter);
