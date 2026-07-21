@@ -2006,7 +2006,7 @@ app.get('/api/files', async (req, res) => {
     res.json(files);
   } catch (error) {
     console.error('Error fetching files:', error);
-    res.status(500).json({ error: 'Failed to fetch files.' });
+    res.status(500).json({ error: 'Failed to fetch files.', details: error.message || String(error) });
   }
 });
 
