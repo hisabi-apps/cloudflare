@@ -1435,6 +1435,7 @@ async function updateSubjectStatsTransaction(fileRecord, delta, transaction) {
     const statsRef = db.collection('subject_stats').doc(docId);
     const updatePayload = {
       subject: subjectNormalized,
+      subjectDisplay: subject,
       year: combo.year,
       state: combo.state,
       specialty: combo.specialty,
