@@ -1936,7 +1936,30 @@ app.get('/api/files', async (req, res) => {
       }
     }
 
-    const snapshot = await query.limit(limitNum).get();
+    let snapshot = await query.limit(limitNum).get();
+    if (snapshot.empty) {
+      const fallbackQuery = db.collection('files')
+        .where('subject', '==', subject)
+        .where('isApproved', '==', true);
+      if (year) fallbackQuery = fallbackQuery.where('year', '==', year);
+      if (state) fallbackQuery = fallbackQuery.where('state', '==', state);
+      if (fileYearFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '==', fileYearFilter);
+      if (fileYearFromFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '>=', fileYearFromFilter);
+      if (fileYearToFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '<=', fileYearToFilter);
+      if (hasFileYearRange) {
+        fallbackQuery = fallbackQuery.orderBy('fileYear');
+      }
+      const fallbackOrdered = fallbackQuery.orderBy('createdAt', 'desc').orderBy('__name__');
+      const fallbackCursor = pageNum > 1 && prevCursorCacheKey ? cache.get(prevCursorCacheKey) : null;
+      if (pageNum > 1 && fallbackCursor) {
+        snapshot = await fallbackOrdered.startAfterDocument(fallbackCursor).limit(limitNum).get();
+      } else {
+        snapshot = await fallbackOrdered.limit(limitNum).get();
+      }
+      if (!snapshot.empty) {
+        console.log(`📌 /api/files fallback to subject exact match for subject=${subject}`);
+      }
+    }
 
     const normalizedSpecialty = specialty ? normalizeText(specialty) : null;
     const files = [];
