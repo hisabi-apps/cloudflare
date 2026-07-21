@@ -1169,7 +1169,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 });
 
 // -------------------- نظام التخزين المؤقت (Cache) --------------------
-const cache = new NodeCache({ stdTTL: 120, checkperiod: 130, maxKeys: 500 });
+const cache = new NodeCache({ stdTTL: 120, checkperiod: 130, maxKeys: 500, useClones: false });
 
 // -------------------- نقاط .well-known و Deep Link (دون تغيير) --------------------
 app.use('/.well-known', express.static(path.join(__dirname, '.well-known')));
