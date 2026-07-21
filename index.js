@@ -2338,6 +2338,8 @@ module.exports = {
 };
 // -------------------- جلب الملفات المعلقة للمراجعة --------------------
 // Firestore composite index recommendation: reviewStatus ASC, createdAt DESC, __name__ ASC
+// Required Firestore index URL:
+// https://console.firebase.google.com/v1/r/project/hisabi-univ/firestore/indexes?create_composite=Cklwcm9qZWN0cy9oaXNhYmktdW5pdi9kYXRhYmFzZXMvKGRlZmF1bHQpL2NvbGxlY3Rpb25Hcm91cHMvZmlsZXMvaW5kZXhlcy9fEAEaEAoMcmV2aWV3U3RhdHVzEAEaDQoJY3JlYXRlZEF0EAIaDAoIX19uYW1lX18QAQ
 app.get('/api/pending', async (req, res) => {
   try {
     const pageNum = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
