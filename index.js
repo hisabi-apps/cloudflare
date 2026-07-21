@@ -1938,7 +1938,7 @@ app.get('/api/files', async (req, res) => {
 
     let snapshot = await query.limit(limitNum).get();
     if (snapshot.empty) {
-      const fallbackQuery = db.collection('files')
+      let fallbackQuery = db.collection('files')
         .where('subject', '==', subject)
         .where('isApproved', '==', true);
       if (year) fallbackQuery = fallbackQuery.where('year', '==', year);
