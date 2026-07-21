@@ -1170,6 +1170,37 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 
 // -------------------- نظام التخزين المؤقت (Cache) --------------------
 const cache = new NodeCache({ stdTTL: 120, checkperiod: 130, maxKeys: 500, useClones: false });
+cache._wrap = function(value, ttl, asClone = true) {
+  if (!this.options.useClones) {
+    asClone = false;
+  }
+  const livetime = ttl === 0 ? 0 : Math.ceil((Date.now() + ttl * 1000) / 1000);
+  return {
+    t: livetime,
+    v: asClone ? require('clone')(value) : value,
+  };
+};
+
+function buildCursorFromDoc(doc, orderFields) {
+  const data = doc.data() || {};
+  return orderFields.map((field) => {
+    if (field === '__name__') {
+      return doc.id;
+    }
+    return data[field] === undefined ? null : data[field];
+  });
+}
+
+function applyCursorToQuery(query, cursor) {
+  if (!cursor) return query;
+  if (Array.isArray(cursor)) {
+    return query.startAfter(...cursor);
+  }
+  if (cursor && typeof cursor === 'object' && typeof cursor.id === 'string') {
+    return query.startAfterDocument(cursor);
+  }
+  return query.startAfter(cursor);
+}
 
 // -------------------- نقاط .well-known و Deep Link (دون تغيير) --------------------
 app.use('/.well-known', express.static(path.join(__dirname, '.well-known')));
@@ -1873,7 +1904,7 @@ app.get('/api/subjects', async (req, res) => {
   }
 });
 
-// 2. جلب ملفات مادة معينة (مع Pagination والـ Cache)
+// 2. جلب ملفات مادة معينة (مع Pagination)
 // Firestore composite index recommendation: subject ASC, isApproved ASC, createdAt DESC, __name__ ASC
 app.get('/api/files', async (req, res) => {
   try {
@@ -1882,19 +1913,9 @@ app.get('/api/files', async (req, res) => {
       return res.status(400).json({ error: 'Subject is required.' });
     }
 
-    const pageNum = parseInt(page, 10);
-    const limitNum = parseInt(limit, 10);
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
     const offset = (pageNum - 1) * limitNum;
-
-    const queryKeyBase = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
-    const cacheKey = `${queryKeyBase}_${pageNum}_${limitNum}`;
-    const cursorCacheKey = `cursor_${queryKeyBase}_${pageNum}_${limitNum}`;
-    const prevCursorCacheKey = pageNum > 1 ? `cursor_${queryKeyBase}_${pageNum - 1}_${limitNum}` : null;
-
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
 
     const fileYearFilter = fileYear != null && fileYear !== '' && !Number.isNaN(Number(fileYear))
       ? Number(fileYear)
@@ -1922,18 +1943,9 @@ app.get('/api/files', async (req, res) => {
       query = query.orderBy('fileYear');
     }
 
-    // ترتيب ثابت مع مفتاح فريد ثانوي لتجنب الترتيب غير المحدد عند القيم المتساوية.
     query = query.orderBy('createdAt', 'desc').orderBy('__name__');
-
-    // نستخدم startAfterDocument لمصادفة التمرير عبر الصفحات بدون offset المكلف.
-    if (pageNum > 1 && prevCursorCacheKey) {
-      const previousPageCursor = cache.get(prevCursorCacheKey);
-      if (previousPageCursor) {
-        query = query.startAfterDocument(previousPageCursor);
-      } else {
-        // إذا لم يكن هناك cursor محفوظ للصفحة السابقة، نستخدم fallback إلى offset.
-        query = query.offset(offset);
-      }
+    if (offset > 0) {
+      query = query.offset(offset);
     }
 
     let snapshot = await query.limit(limitNum).get();
@@ -1949,13 +1961,7 @@ app.get('/api/files', async (req, res) => {
       if (hasFileYearRange) {
         fallbackQuery = fallbackQuery.orderBy('fileYear');
       }
-      const fallbackOrdered = fallbackQuery.orderBy('createdAt', 'desc').orderBy('__name__');
-      const fallbackCursor = pageNum > 1 && prevCursorCacheKey ? cache.get(prevCursorCacheKey) : null;
-      if (pageNum > 1 && fallbackCursor) {
-        snapshot = await fallbackOrdered.startAfterDocument(fallbackCursor).limit(limitNum).get();
-      } else {
-        snapshot = await fallbackOrdered.limit(limitNum).get();
-      }
+      snapshot = await fallbackQuery.orderBy('createdAt', 'desc').orderBy('__name__').offset(offset).limit(limitNum).get();
       if (!snapshot.empty) {
         console.log(`📌 /api/files fallback to subject exact match for subject=${subject}`);
       }
@@ -1964,7 +1970,7 @@ app.get('/api/files', async (req, res) => {
     const normalizedSpecialty = specialty ? normalizeText(specialty) : null;
     const files = [];
     snapshot.forEach(doc => {
-      const data = doc.data();
+      const data = doc.data() || {};
       const specialtyValue = (data.specialty || '').toString();
       if (normalizedSpecialty && normalizeText(specialtyValue) !== normalizedSpecialty) {
         return;
@@ -1972,38 +1978,12 @@ app.get('/api/files', async (req, res) => {
       files.push({ id: doc.id, ...data });
     });
 
-    // حافظ على آخر وثيقة في كل صفحة داخل الكاش لكي يستخدمها الطلب التالي كـ startAfterDocument.
-    if (snapshot.docs.length > 0) {
-      const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-      cache.set(cursorCacheKey, lastDoc);
-    }
-
-    cache.set(cacheKey, files);
-
-    // حصر عدد صفحات الكاش لكل استعلام لتجنّب تخزين ذاكرة غير ضروري.
-    const maxCachedPages = 5;
-    const cachedPagesKey = `cached_pages_${queryKeyBase}`;
-    const existingPaginationPages = cache.get(cachedPagesKey);
-    const activePages = Array.isArray(existingPaginationPages)
-      ? existingPaginationPages.map((p) => parseInt(p, 10)).filter((p) => !Number.isNaN(p))
-      : [];
-
-    if (!activePages.includes(pageNum)) {
-      activePages.push(pageNum);
-    }
-
-    while (activePages.length > maxCachedPages) {
-      const pageToRemove = activePages.shift();
-      if (pageToRemove !== undefined) {
-        const expiredCacheKey = `${queryKeyBase}_${pageToRemove}_${limitNum}`;
-        const expiredCursorKey = `cursor_${queryKeyBase}_${pageToRemove}_${limitNum}`;
-        cache.del(expiredCacheKey);
-        cache.del(expiredCursorKey);
-      }
-    }
-
-    cache.set(cachedPagesKey, activePages);
-    res.json(files);
+    res.json({
+      items: files,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: snapshot.size === limitNum,
+    });
   } catch (error) {
     console.error('Error fetching files:', error);
     res.status(500).json({ error: 'Failed to fetch files.', details: error.message || String(error) });
