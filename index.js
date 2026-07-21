@@ -1735,9 +1735,9 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // 1. جلب قائمة المواد مع عدد الملفات (مع الفلاتر والـ Cache)
 app.get('/api/subjects', async (req, res) => {
   try {
-    const { year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 20 } = req.query;
+    const { year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 10 } = req.query;
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 50);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
     const queryKeyBase = `subject_stats_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
     const cacheKey = `${queryKeyBase}_${pageNum}_${limitNum}`;
     const cursorCacheKey = `subject_stats_cursor_${queryKeyBase}_${pageNum}_${limitNum}`;
@@ -1871,7 +1871,7 @@ app.get('/api/subjects', async (req, res) => {
 // Firestore composite index recommendation: subject ASC, isApproved ASC, createdAt DESC, __name__ ASC
 app.get('/api/files', async (req, res) => {
   try {
-    const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 20 } = req.query;
+    const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 10 } = req.query;
     if (!subject) {
       return res.status(400).json({ error: 'Subject is required.' });
     }
