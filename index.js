@@ -62,6 +62,8 @@ async function findExistingDuplicate(fileHash, currentFileId = '', options = {})
   const { fileBuffer, fileName = '', mimeType = '', uploadedByUid = '' } = options;
 
   try {
+    // Fast path: signature store lookup first, then indexed fileHash search,
+    // then fallback scan. This keeps the common case efficient.
     const signatureDoc = await db.collection('file_signatures').doc(fileHash).get();
     const signatureMatch = await findDuplicateBySignatureStore({
       fileHash,
@@ -80,29 +82,22 @@ async function findExistingDuplicate(fileHash, currentFileId = '', options = {})
   try {
     const fastQuery = await db.collection('files')
       .where('fileHash', '==', fileHash)
-      .limit(20)
+      .limit(1)
       .get();
 
     if (!fastQuery.empty) {
-      const match = await findMatchingDuplicateInDocs({
-        docs: fastQuery.docs,
-        fileHash,
-        currentFileId,
-        fileBuffer,
-        fileName,
-        mimeType,
-        getOrComputeFileHash: async (doc) => getOrComputeFileHash(doc),
-      });
-      if (match) {
-        return match;
+      const doc = fastQuery.docs[0];
+      if ((currentFileId || '').toString().trim() !== doc.id) {
+        return doc;
       }
+      console.log('ℹ️ Found fileHash match for currentFileId, continuing to fallback scan');
     }
   } catch (error) {
     console.warn('⚠️ Fast duplicate lookup failed, falling back to limited scan:', error.message || error);
   }
 
   try {
-    const fallbackSnapshot = await db.collection('files').limit(100).get();
+    const fallbackSnapshot = await db.collection('files').limit(20).get();
     const match = await findMatchingDuplicateInDocs({
       docs: fallbackSnapshot.docs,
       fileHash,
@@ -553,6 +548,40 @@ function isAdminUserData(userData, email) {
   return false;
 }
 
+async function verifyAdminRequest(req, res) {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Unauthorized request.' });
+    return null;
+  }
+
+  const idToken = authHeader.split(' ')[1];
+  let decodedToken;
+  try {
+    decodedToken = await admin.auth().verifyIdToken(idToken);
+  } catch (tokenError) {
+    console.error('⚠️ Invalid auth token in admin request:', tokenError);
+    res.status(401).json({ error: 'Unauthorized request.' });
+    return null;
+  }
+
+  const currentUid = decodedToken?.uid;
+  if (!currentUid) {
+    res.status(401).json({ error: 'Unauthorized request.' });
+    return null;
+  }
+
+  const senderDoc = await db.collection('users').doc(currentUid).get();
+  const senderEmail = decodedToken.email || '';
+  const senderData = senderDoc.exists ? senderDoc.data() : null;
+  if (!senderDoc.exists || !isAdminUserData(senderData, senderEmail)) {
+    res.status(403).json({ error: 'Not authorized.' });
+    return null;
+  }
+
+  return { uid: currentUid, userData: senderData };
+}
+
 app.post('/api/notifications/mark-opened', async (req, res) => {
   try {
     const authHeader = req.headers.authorization || '';
@@ -612,6 +641,126 @@ app.post('/api/notifications/mark-opened', async (req, res) => {
   } catch (error) {
     console.error('Failed to mark notification as opened:', error);
     return res.status(500).json({ error: 'Failed to update open count.' });
+  }
+});
+
+app.post('/api/admin/rebuild-stats', async (req, res) => {
+  try {
+    const adminRequest = await verifyAdminRequest(req, res);
+    if (!adminRequest) {
+      return;
+    }
+
+    console.log('🔧 Admin rebuild-stats requested by', adminRequest.uid);
+
+    const approvedFilesSnapshot = await db.collection('files')
+      .where('isApproved', '==', true)
+      .get();
+
+    const statsMap = new Map();
+
+    const normalizeFileYear = (rawValue) => {
+      if (rawValue == null || rawValue === '') {
+        return 'all';
+      }
+      const numeric = Number(rawValue);
+      return Number.isNaN(numeric) ? normalizeStatsFilterValue(rawValue) : numeric;
+    };
+
+    approvedFilesSnapshot.forEach((doc) => {
+      const data = doc.data() || {};
+      const subject = normalizeText(data.subject || 'عام');
+      const yearValue = normalizeStatsFilterValue(data.year || 'all');
+      const stateValue = normalizeStatsFilterValue(data.state || 'all');
+      const specialtyValue = normalizeStatsFilterValue(data.specialty || 'all');
+      const fileYearValue = normalizeFileYear(data.fileYear || 'all');
+
+      const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
+      const filterValues = {
+        year: yearValue,
+        state: stateValue,
+        specialty: specialtyValue,
+        fileYear: fileYearValue,
+      };
+
+      for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
+        const combo = {
+          subject,
+          year: 'all',
+          state: 'all',
+          specialty: 'all',
+          fileYear: 'all',
+        };
+
+        filterGroups.forEach((group, index) => {
+          if (mask & (1 << index)) {
+            combo[group] = filterValues[group] ?? 'all';
+          }
+        });
+
+        const docId = buildSubjectStatsDocId(combo);
+        const existing = statsMap.get(docId) || {
+          subject: subject,
+          year: combo.year,
+          state: combo.state,
+          specialty: combo.specialty,
+          fileYear: combo.fileYear,
+          count: 0,
+          specialties: new Set(),
+        };
+
+        existing.count += 1;
+        if (specialtyValue !== 'all') {
+          existing.specialties.add(specialtyValue);
+        }
+        statsMap.set(docId, existing);
+      }
+    });
+
+    console.log(`🔁 Rebuilding subject_stats from ${approvedFilesSnapshot.size} approved files into ${statsMap.size} stats docs`);
+
+    // حذف كل وثائق subject_stats الحالية أولاً ثم إعادة الكتابة.
+    let deletedCount = 0;
+    while (true) {
+      const snapshot = await db.collection('subject_stats').limit(500).get();
+      if (snapshot.empty) break;
+      const deleteBatch = db.batch();
+      snapshot.docs.forEach((existingDoc) => deleteBatch.delete(existingDoc.ref));
+      await deleteBatch.commit();
+      deletedCount += snapshot.size;
+      if (snapshot.size < 500) break;
+    }
+    console.log(`🧹 Deleted ${deletedCount} existing subject_stats docs before rebuild.`);
+
+    let writeCount = 0;
+    let batch = db.batch();
+    for (const [docId, value] of statsMap.entries()) {
+      const statsRef = db.collection('subject_stats').doc(docId);
+      batch.set(statsRef, {
+        subject: value.subject,
+        year: value.year,
+        state: value.state,
+        specialty: value.specialty,
+        fileYear: value.fileYear,
+        count: value.count,
+        specialties: Array.from(value.specialties).sort(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: false });
+      writeCount += 1;
+
+      if (writeCount % 400 === 0) {
+        await batch.commit();
+        batch = db.batch();
+      }
+    }
+    await batch.commit();
+
+    cache.flushAll();
+
+    return res.json({ success: true, updated: statsMap.size });
+  } catch (error) {
+    console.error('Failed to rebuild subject_stats:', error);
+    return res.status(500).json({ error: 'Failed to rebuild subject_stats.' });
   }
 });
 
@@ -1016,7 +1165,7 @@ app.post('/api/admin/send-fcm-notification', async (req, res) => {
 });
 
 // -------------------- نظام التخزين المؤقت (Cache) --------------------
-const cache = new NodeCache({ stdTTL: 120, checkperiod: 130 });
+const cache = new NodeCache({ stdTTL: 120, checkperiod: 130, maxKeys: 500 });
 
 // -------------------- نقاط .well-known و Deep Link (دون تغيير) --------------------
 app.use('/.well-known', express.static(path.join(__dirname, '.well-known')));
@@ -1135,6 +1284,168 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+function normalizeStatsFilterValue(value) {
+  const raw = value == null ? '' : value.toString().trim();
+  return raw.length > 0 ? normalizeText(raw) : 'all';
+}
+
+function buildSubjectStatsDocId({ subject, year, state, specialty, fileYear }) {
+  const normalized = {
+    subject: normalizeText(subject || 'عام'),
+    year: normalizeStatsFilterValue(year),
+    state: normalizeStatsFilterValue(state),
+    specialty: normalizeStatsFilterValue(specialty),
+    fileYear: normalizeStatsFilterValue(fileYear),
+  };
+  return [
+    `subject_${normalized.subject}`,
+    `year_${normalized.year}`,
+    `state_${normalized.state}`,
+    `specialty_${normalized.specialty}`,
+    `fileYear_${normalized.fileYear}`,
+  ].join('|');
+}
+
+async function updateSubjectStats(fileRecord, delta = 1) {
+  try {
+    const subject = fileRecord.subject || 'عام';
+    const yearValue = fileRecord.year || 'all';
+    const stateValue = fileRecord.state || 'all';
+    const specialtyValue = fileRecord.specialty || 'all';
+    const fileYearRaw = fileRecord.fileYear;
+    const fileYearValue = typeof fileYearRaw === 'number' || !Number.isNaN(Number(fileYearRaw))
+      ? Number(fileYearRaw)
+      : 'all';
+
+    const subjectNormalized = normalizeText(subject);
+    const yearNormalized = normalizeStatsFilterValue(yearValue);
+    const stateNormalized = normalizeStatsFilterValue(stateValue);
+    const specialtyNormalized = normalizeStatsFilterValue(specialtyValue);
+    const countDelta = Number.isNaN(Number(delta)) ? 1 : Number(delta);
+
+    const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
+    const filterValues = {
+      year: yearNormalized,
+      state: stateNormalized,
+      specialty: specialtyNormalized,
+      fileYear: fileYearValue,
+    };
+
+    const batch = db.batch();
+    const seenDocIds = new Set();
+
+    for (let mask = 0; mask < (1 << filterGroups.length); mask++) {
+      const combo = {
+        subject: subjectNormalized,
+        year: 'all',
+        state: 'all',
+        specialty: 'all',
+        fileYear: 'all',
+      };
+
+      filterGroups.forEach((group, index) => {
+        if (mask & (1 << index)) {
+          combo[group] = filterValues[group] ?? 'all';
+        }
+      });
+
+      const docId = buildSubjectStatsDocId(combo);
+      if (seenDocIds.has(docId)) {
+        continue;
+      }
+      seenDocIds.add(docId);
+
+      const statsRef = db.collection('subject_stats').doc(docId);
+      const updatePayload = {
+        subject: subjectNormalized,
+        year: combo.year,
+        state: combo.state,
+        specialty: combo.specialty,
+        fileYear: combo.fileYear,
+        count: admin.firestore.FieldValue.increment(countDelta),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      if (specialtyNormalized !== 'all' && countDelta > 0) {
+        updatePayload.specialties = admin.firestore.FieldValue.arrayUnion(specialtyNormalized);
+      }
+
+      batch.set(statsRef, updatePayload, { merge: true });
+    }
+
+    await batch.commit();
+    cache.flushAll();
+    console.log(`✅ Updated subject_stats for ${seenDocIds.size} combinations for subject=${subject} delta=${countDelta}`);
+  } catch (statsError) {
+    console.error('⚠️ Failed to update subject_stats:', statsError.message || statsError);
+  }
+}
+
+async function updateSubjectStatsTransaction(fileRecord, delta, transaction) {
+  const subject = fileRecord.subject || 'عام';
+  const yearValue = fileRecord.year || 'all';
+  const stateValue = fileRecord.state || 'all';
+  const specialtyValue = fileRecord.specialty || 'all';
+  const fileYearRaw = fileRecord.fileYear;
+  const fileYearValue = typeof fileYearRaw === 'number' || !Number.isNaN(Number(fileYearRaw))
+    ? Number(fileYearRaw)
+    : 'all';
+
+  const subjectNormalized = normalizeText(subject);
+  const yearNormalized = normalizeStatsFilterValue(yearValue);
+  const stateNormalized = normalizeStatsFilterValue(stateValue);
+  const specialtyNormalized = normalizeStatsFilterValue(specialtyValue);
+  const countDelta = Number.isNaN(Number(delta)) ? 1 : Number(delta);
+
+  const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
+  const filterValues = {
+    year: yearNormalized,
+    state: stateNormalized,
+    specialty: specialtyNormalized,
+    fileYear: fileYearValue,
+  };
+
+  const seenDocIds = new Set();
+  for (let mask = 0; mask < (1 << filterGroups.length); mask++) {
+    const combo = {
+      subject: subjectNormalized,
+      year: 'all',
+      state: 'all',
+      specialty: 'all',
+      fileYear: 'all',
+    };
+
+    filterGroups.forEach((group, index) => {
+      if (mask & (1 << index)) {
+        combo[group] = filterValues[group] ?? 'all';
+      }
+    });
+
+    const docId = buildSubjectStatsDocId(combo);
+    if (seenDocIds.has(docId)) {
+      continue;
+    }
+    seenDocIds.add(docId);
+
+    const statsRef = db.collection('subject_stats').doc(docId);
+    const updatePayload = {
+      subject: subjectNormalized,
+      year: combo.year,
+      state: combo.state,
+      specialty: combo.specialty,
+      fileYear: combo.fileYear,
+      count: admin.firestore.FieldValue.increment(countDelta),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (specialtyNormalized !== 'all' && countDelta > 0) {
+      updatePayload.specialties = admin.firestore.FieldValue.arrayUnion(specialtyNormalized);
+    }
+
+    transaction.set(statsRef, updatePayload, { merge: true });
+  }
+}
+
 function sanitizeSegment(value) {
   return value
     .toString()
@@ -1167,20 +1478,20 @@ function buildPublicUrl(req, objectKey) {
   return publicServerUrl;
 }
 
-// -------------------- نقطة الحذف (دون تغيير مع إضافة مسح الكاش) --------------------
+// -------------------- نقطة الحذف (تحديث subject_stats إذا كان الملف معتمدًا) --------------------
 app.post('/delete', express.json(), async (req, res) => {
+  const objectKey = (req.body.objectKey || '').toString().trim();
+  if (!objectKey) {
+    return res.status(400).json({ error: 'Missing object key.' });
+  }
+
+  const cleanedKey = objectKey.replace(/^\/+/, '');
   try {
-    const objectKey = (req.body.objectKey || '').toString().trim();
-    if (!objectKey) {
-      return res.status(400).json({ error: 'Missing object key.' });
-    }
     const command = new DeleteObjectCommand({
       Bucket: R2_BUCKET_NAME,
-      Key: objectKey.replace(/^\/+/, ''),
+      Key: cleanedKey,
     });
     await s3Client.send(command);
-    cache.flushAll();
-    return res.status(200).json({ success: true, objectKey });
   } catch (error) {
     console.error('Delete failed:', error);
     return res.status(500).json({
@@ -1188,6 +1499,35 @@ app.post('/delete', express.json(), async (req, res) => {
       details: error.message || String(error),
     });
   }
+
+  try {
+    const fileQuery = await db.collection('files')
+      .where('storagePath', '==', cleanedKey)
+      .limit(1)
+      .get();
+
+    if (!fileQuery.empty) {
+      const fileDoc = fileQuery.docs[0];
+      const fileData = fileDoc.data() || {};
+      if (fileData.isApproved === true) {
+        try {
+          await updateSubjectStats(fileData, -1);
+          console.log(`✅ subject_stats decremented for deleted approved file: ${cleanedKey}`);
+        } catch (statsError) {
+          console.error('⚠️ Failed to decrement subject_stats during delete:', statsError);
+        }
+      } else {
+        console.log(`ℹ️ Deleted file was not approved, skipping subject_stats decrement: ${cleanedKey}`);
+      }
+    } else {
+      console.log(`⚠️ No Firestore file document found for deleted storagePath: ${cleanedKey}`);
+    }
+  } catch (error) {
+    console.error('⚠️ Failed to lookup Firestore file for subject_stats update after delete:', error);
+  }
+
+  cache.flushAll();
+  return res.status(200).json({ success: true, objectKey });
 });
 
 app.post('/check-duplicates', upload.single('file'), async (req, res) => {
@@ -1355,6 +1695,12 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           { merge: true },
         );
       }
+
+      if (docRef && newFileDoc.isApproved) {
+        updateSubjectStats(newFileDoc).catch((statsError) => {
+          console.error('⚠️ subject_stats update failed during upload:', statsError.message || statsError);
+        });
+      }
     }
 
     // 4. مسح الكاش
@@ -1383,69 +1729,130 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // 1. جلب قائمة المواد مع عدد الملفات (مع الفلاتر والـ Cache)
 app.get('/api/subjects', async (req, res) => {
   try {
-    const { year, state, specialty, fileYear, fileYearFrom, fileYearTo } = req.query;
-    const pageNum = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
-    const limitNum = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 100);
-    const cacheKey = `subjects_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}_${pageNum}_${limitNum}`;
+    const { year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 20 } = req.query;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 50);
+    const queryKeyBase = `subject_stats_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
+    const cacheKey = `${queryKeyBase}_${pageNum}_${limitNum}`;
+    const cursorCacheKey = `subject_stats_cursor_${queryKeyBase}_${pageNum}_${limitNum}`;
+    const prevCursorCacheKey = pageNum > 1 ? `subject_stats_cursor_${queryKeyBase}_${pageNum - 1}_${limitNum}` : null;
+
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
     }
 
-    let query = db.collection('files').where('isApproved', '==', true);
-    if (year) query = query.where('year', '==', year);
-    if (state) query = query.where('state', '==', state);
-    if (fileYear) query = query.where('fileYear', '==', fileYear);
-    if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
-    if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
+    let query = db.collection('subject_stats');
+      const yearFilter = year ? normalizeStatsFilterValue(year) : null;
+    const stateFilter = state ? normalizeStatsFilterValue(state) : null;
+    const specialtyFilter = specialty ? normalizeStatsFilterValue(specialty) : null;
+    const fileYearFilter = fileYear != null && fileYear !== '' && !Number.isNaN(Number(fileYear))
+      ? Number(fileYear)
+      : null;
+    const fileYearFromFilter = fileYearFrom != null && fileYearFrom !== '' && !Number.isNaN(Number(fileYearFrom))
+      ? Number(fileYearFrom)
+      : null;
+    const fileYearToFilter = fileYearTo != null && fileYearTo !== '' && !Number.isNaN(Number(fileYearTo))
+      ? Number(fileYearTo)
+      : null;
 
-    const snapshot = await query.get();
-    const normalizedSpecialty = specialty ? normalizeText(specialty) : null;
-    const subjectMap = new Map();
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      const specialtyValue = (data.specialty || '').toString();
-      if (normalizedSpecialty && normalizeText(specialtyValue) !== normalizedSpecialty) {
-        return;
-      }
+    if (yearFilter) query = query.where('year', '==', yearFilter);
+    if (stateFilter) query = query.where('state', '==', stateFilter);
+    if (specialtyFilter) query = query.where('specialty', '==', specialtyFilter);
+    if (fileYearFilter != null) query = query.where('fileYear', '==', fileYearFilter);
+    if (fileYearFromFilter != null) query = query.where('fileYear', '>=', fileYearFromFilter);
+    if (fileYearToFilter != null) query = query.where('fileYear', '<=', fileYearToFilter);
 
-      const subject = data.subject || 'عام';
-      const specialty = specialtyValue.trim();
-      if (!subjectMap.has(subject)) {
-        subjectMap.set(subject, { count: 0, specialties: new Set() });
+    query = query.orderBy('subject').orderBy('__name__');
+    if (pageNum > 1 && prevCursorCacheKey) {
+      const previousPageCursor = cache.get(prevCursorCacheKey);
+      if (previousPageCursor) {
+        query = query.startAfterDocument(previousPageCursor);
+      } else {
+        query = query.offset((pageNum - 1) * limitNum);
       }
+    }
 
-      const subjectEntry = subjectMap.get(subject);
-      subjectEntry.count += 1;
-      if (specialty) {
-        subjectEntry.specialties.add(specialty);
-      }
+    const snapshot = await query.limit(limitNum).get();
+    console.log(`📊 /api/subjects read ${snapshot.size} subject_stats docs for page=${pageNum} limit=${limitNum}`);
+
+    let items = snapshot.docs.map(doc => {
+      const data = doc.data() || {};
+      return {
+        subject: data.subject || 'عام',
+        count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
+        specialties: Array.isArray(data.specialties) ? data.specialties : [],
+      };
     });
 
-    const result = Array.from(subjectMap.entries()).map(([subject, info]) => ({
-      subject,
-      count: info.count,
-      specialties: Array.from(info.specialties).sort(),
-    }));
+    if (snapshot.empty && pageNum === 1) {
+      console.log('⚠️ subject_stats is empty; falling back to files aggregation for /api/subjects');
+      const fallbackQuery = db.collection('files').where('isApproved', '==', true);
+      if (yearFilter) fallbackQuery = fallbackQuery.where('year', '==', yearFilter);
+      if (stateFilter) fallbackQuery = fallbackQuery.where('state', '==', stateFilter);
+      if (fileYearFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '==', fileYearFilter);
+      if (fileYearFromFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '>=', fileYearFromFilter);
+      if (fileYearToFilter != null) fallbackQuery = fallbackQuery.where('fileYear', '<=', fileYearToFilter);
+      const fallbackSnapshot = await fallbackQuery.get();
+      const subjectMap = new Map();
+      const normalizedSpecialtyFilter = specialtyFilter;
+      fallbackSnapshot.forEach(doc => {
+        const data = doc.data() || {};
+        const specialtyValue = normalizeText((data.specialty || '').toString());
+        if (normalizedSpecialtyFilter && specialtyValue !== normalizedSpecialtyFilter) {
+          return;
+        }
+        const subjectName = data.subject || 'عام';
+        const key = subjectName;
+        if (!subjectMap.has(key)) {
+          subjectMap.set(key, { count: 0, specialties: new Set() });
+        }
+        const entry = subjectMap.get(key);
+        entry.count += 1;
+        if (specialtyValue) {
+          entry.specialties.add(specialtyValue);
+        }
+      });
+      items = Array.from(subjectMap.entries()).map(([subjectName, info]) => ({
+        subject: subjectName,
+        count: info.count,
+        specialties: Array.from(info.specialties).sort(),
+      }));
+    }
 
-    result.sort((a, b) => {
-      const subjectCompare = a.subject.localeCompare(b.subject, 'ar', { sensitivity: 'base' });
-      if (subjectCompare !== 0) {
-        return subjectCompare;
-      }
-      return b.count - a.count;
-    });
+    if (snapshot.docs.length > 0) {
+      cache.set(cursorCacheKey, snapshot.docs[snapshot.docs.length - 1]);
+    }
 
-    const startIndex = (pageNum - 1) * limitNum;
-    const pagedItems = result.slice(startIndex, startIndex + limitNum);
     const response = {
-      items: pagedItems,
+      items,
       page: pageNum,
       limit: limitNum,
-      hasMore: startIndex + limitNum < result.length,
-      totalCount: result.length,
+      hasMore: snapshot.size === limitNum,
     };
 
+    const maxCachedPages = 5;
+    const cachedPagesKey = `cached_pages_${queryKeyBase}`;
+    const existingPaginationPages = cache.get(cachedPagesKey);
+    const activePages = Array.isArray(existingPaginationPages)
+      ? existingPaginationPages.map((p) => parseInt(p, 10)).filter((p) => !Number.isNaN(p))
+      : [];
+
+    if (!activePages.includes(pageNum)) {
+      activePages.push(pageNum);
+    }
+
+    while (activePages.length > maxCachedPages) {
+      const pageToRemove = activePages.shift();
+      if (pageToRemove !== undefined) {
+        const expiredCacheKey = `${queryKeyBase}_${pageToRemove}_${limitNum}`;
+        const expiredCursorKey = `subject_stats_cursor_${queryKeyBase}_${pageToRemove}_${limitNum}`;
+        cache.del(expiredCacheKey);
+        cache.del(expiredCursorKey);
+      }
+    }
+
+    cache.set(cachedPagesKey, activePages);
     cache.set(cacheKey, response);
     res.json(response);
   } catch (error) {
@@ -1455,6 +1862,7 @@ app.get('/api/subjects', async (req, res) => {
 });
 
 // 2. جلب ملفات مادة معينة (مع Pagination والـ Cache)
+// Firestore composite index recommendation: subject ASC, isApproved ASC, createdAt DESC, __name__ ASC
 app.get('/api/files', async (req, res) => {
   try {
     const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 20 } = req.query;
@@ -1466,11 +1874,25 @@ app.get('/api/files', async (req, res) => {
     const limitNum = parseInt(limit, 10);
     const offset = (pageNum - 1) * limitNum;
 
-    const cacheKey = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}_${pageNum}_${limitNum}`;
+    const queryKeyBase = `files_${subject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
+    const cacheKey = `${queryKeyBase}_${pageNum}_${limitNum}`;
+    const cursorCacheKey = `cursor_${queryKeyBase}_${pageNum}_${limitNum}`;
+    const prevCursorCacheKey = pageNum > 1 ? `cursor_${queryKeyBase}_${pageNum - 1}_${limitNum}` : null;
+
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
     }
+
+    const fileYearFilter = fileYear != null && fileYear !== '' && !Number.isNaN(Number(fileYear))
+      ? Number(fileYear)
+      : null;
+    const fileYearFromFilter = fileYearFrom != null && fileYearFrom !== '' && !Number.isNaN(Number(fileYearFrom))
+      ? Number(fileYearFrom)
+      : null;
+    const fileYearToFilter = fileYearTo != null && fileYearTo !== '' && !Number.isNaN(Number(fileYearTo))
+      ? Number(fileYearTo)
+      : null;
 
     let query = db.collection('files')
       .where('subject', '==', subject)
@@ -1478,21 +1900,30 @@ app.get('/api/files', async (req, res) => {
 
     if (year) query = query.where('year', '==', year);
     if (state) query = query.where('state', '==', state);
-    if (fileYear) query = query.where('fileYear', '==', fileYear);
-    const hasFileYearRange = fileYearFrom || fileYearTo;
-    if (fileYearFrom) query = query.where('fileYear', '>=', fileYearFrom);
-    if (fileYearTo) query = query.where('fileYear', '<=', fileYearTo);
+    if (fileYearFilter != null) query = query.where('fileYear', '==', fileYearFilter);
+    const hasFileYearRange = fileYearFromFilter != null || fileYearToFilter != null;
+    if (fileYearFromFilter != null) query = query.where('fileYear', '>=', fileYearFromFilter);
+    if (fileYearToFilter != null) query = query.where('fileYear', '<=', fileYearToFilter);
 
     if (hasFileYearRange) {
       query = query.orderBy('fileYear');
     }
 
-    // الترتيب حسب الأحدث ثم Pagination باستخدام offset
-    const snapshot = await query
-      .orderBy('createdAt', 'desc')
-      .offset(offset)
-      .limit(limitNum)
-      .get();
+    // ترتيب ثابت مع مفتاح فريد ثانوي لتجنب الترتيب غير المحدد عند القيم المتساوية.
+    query = query.orderBy('createdAt', 'desc').orderBy('__name__');
+
+    // نستخدم startAfterDocument لمصادفة التمرير عبر الصفحات بدون offset المكلف.
+    if (pageNum > 1 && prevCursorCacheKey) {
+      const previousPageCursor = cache.get(prevCursorCacheKey);
+      if (previousPageCursor) {
+        query = query.startAfterDocument(previousPageCursor);
+      } else {
+        // إذا لم يكن هناك cursor محفوظ للصفحة السابقة، نستخدم fallback إلى offset.
+        query = query.offset(offset);
+      }
+    }
+
+    const snapshot = await query.limit(limitNum).get();
 
     const normalizedSpecialty = specialty ? normalizeText(specialty) : null;
     const files = [];
@@ -1505,7 +1936,37 @@ app.get('/api/files', async (req, res) => {
       files.push({ id: doc.id, ...data });
     });
 
+    // حافظ على آخر وثيقة في كل صفحة داخل الكاش لكي يستخدمها الطلب التالي كـ startAfterDocument.
+    if (snapshot.docs.length > 0) {
+      const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      cache.set(cursorCacheKey, lastDoc);
+    }
+
     cache.set(cacheKey, files);
+
+    // حصر عدد صفحات الكاش لكل استعلام لتجنّب تخزين ذاكرة غير ضروري.
+    const maxCachedPages = 5;
+    const cachedPagesKey = `cached_pages_${queryKeyBase}`;
+    const existingPaginationPages = cache.get(cachedPagesKey);
+    const activePages = Array.isArray(existingPaginationPages)
+      ? existingPaginationPages.map((p) => parseInt(p, 10)).filter((p) => !Number.isNaN(p))
+      : [];
+
+    if (!activePages.includes(pageNum)) {
+      activePages.push(pageNum);
+    }
+
+    while (activePages.length > maxCachedPages) {
+      const pageToRemove = activePages.shift();
+      if (pageToRemove !== undefined) {
+        const expiredCacheKey = `${queryKeyBase}_${pageToRemove}_${limitNum}`;
+        const expiredCursorKey = `cursor_${queryKeyBase}_${pageToRemove}_${limitNum}`;
+        cache.del(expiredCacheKey);
+        cache.del(expiredCursorKey);
+      }
+    }
+
+    cache.set(cachedPagesKey, activePages);
     res.json(files);
   } catch (error) {
     console.error('Error fetching files:', error);
@@ -1517,9 +1978,8 @@ app.get('/api/files', async (req, res) => {
 app.patch('/api/moderate/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    // Accept both generic `comment` and localized comment fields from the client
     const {
-      approved,
+      approved: approvedRaw,
       comment,
       commentAr,
       commentEn,
@@ -1531,8 +1991,24 @@ app.patch('/api/moderate/:id', async (req, res) => {
       withCorrection,
     } = req.body || {};
 
-    if (typeof approved !== 'boolean') {
-      return res.status(400).json({ error: 'Approved status is required (boolean).' });
+    const parseBooleanLike = (value) => {
+      if (typeof value === 'boolean') {
+        return value;
+      }
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+      }
+      if (typeof value === 'number') {
+        return value === 1;
+      }
+      return null;
+    };
+
+    const approved = parseBooleanLike(approvedRaw);
+    if (approved === null) {
+      return res.status(400).json({ error: 'Approved status is required and must be boolean-like.' });
     }
 
     const docRef = db.collection('files').doc(id);
@@ -1541,78 +2017,70 @@ app.patch('/api/moderate/:id', async (req, res) => {
       return res.status(404).json({ error: 'File not found.' });
     }
 
-    const fileData = doc.data();
-    const userId = fileData?.uploadedByUid; // ✅ استخدام uploadedByUid (المفتاح الصحيح)
-    const fileTitle = fileData?.title || 'ملف';
+    const fileData = doc.data() || {};
+    const userId = fileData.uploadedByUid ? String(fileData.uploadedByUid).trim() : '';
+    const fileTitle = fileData.title || 'ملف';
+    const parsedPointsDelta = pointsDelta == null ? 0 : Number(pointsDelta);
 
-    console.log(`📝 Moderating file ${id}: approved=${approved}, userId=${userId}`);
+    const moderationComment =
+      comment || commentAr || commentEn || commentFr || '';
 
-    // تحوّل القيمة الواردة إلى رقم إذا أُرسلت كسلسلة
-    const parsedPointsDeltaForUpdate = (pointsDelta == null) ? 0 : Number(pointsDelta);
+    await db.runTransaction(async (transaction) => {
+      const fileSnapshot = await transaction.get(docRef);
+      if (!fileSnapshot.exists) {
+        throw new Error('File not found.');
+      }
 
-    const updateData = {
-      isApproved: approved,
-      reviewStatus: approved ? 'approved' : 'rejected',
-      moderationComment: (comment || commentAr || commentEn || commentFr || ''),
-      pointsDelta: parsedPointsDeltaForUpdate,
-      pointsAwarded: approved ? parsedPointsDeltaForUpdate : 0,
-      withCorrection: Boolean(withCorrection),
-      moderatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
+      transaction.update(docRef, {
+        isApproved: approved,
+        reviewStatus: approved ? 'approved' : 'rejected',
+        moderationComment,
+        pointsDelta: parsedPointsDelta,
+        pointsAwarded: approved ? parsedPointsDelta : 0,
+        withCorrection: Boolean(withCorrection),
+        moderatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
-    await docRef.update(updateData);
-    cache.flushAll();
-
-    // تحديث نقاط المستخدم عند قبول الملف
-    if (approved && !Number.isNaN(parsedPointsDeltaForUpdate) && parsedPointsDeltaForUpdate !== 0 && userId) {
-      try {
-        console.log(`ℹ️ Attempting to add points: user=${userId}, delta=${parsedPointsDeltaForUpdate}`);
+      if (approved && userId && parsedPointsDelta !== 0) {
         const userRef = db.collection('users').doc(userId);
-        await userRef.set(
+        const userStatsRef = userRef.collection('stats').doc('profile');
+
+        transaction.set(
+          userRef,
           {
-            points: admin.firestore.FieldValue.increment(parsedPointsDeltaForUpdate),
+            points: admin.firestore.FieldValue.increment(parsedPointsDelta),
             lastPointsUpdate: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
         );
 
-        const userStatsRef = userRef.collection('stats').doc('profile');
-        await userStatsRef.set(
+        transaction.set(
+          userStatsRef,
           {
-            points: admin.firestore.FieldValue.increment(parsedPointsDeltaForUpdate),
+            points: admin.firestore.FieldValue.increment(parsedPointsDelta),
           },
           { merge: true },
         );
-
-        // Read back the user's points (best-effort) to log the new value for debugging
-        try {
-          const afterUserDoc = await userRef.get();
-          const afterData = afterUserDoc.exists ? (afterUserDoc.data() || {}) : {};
-          console.log(`✅ Added ${parsedPointsDeltaForUpdate} points for user ${userId}. New user.points=${afterData.points}`);
-        } catch (readBackError) {
-          console.log(`✅ Added ${parsedPointsDeltaForUpdate} points for user ${userId}. (Could not read back new points: ${readBackError?.message || readBackError})`);
-        }
-      } catch (pointsError) {
-        console.error(`⚠️ Failed to update points for user ${userId}:`, pointsError.message || pointsError);
       }
-    }
 
-    // إرسال إشعار للمستخدم عند الموافقة أو الرفض
+      if (approved) {
+        await updateSubjectStatsTransaction(fileSnapshot.data() || fileData, 1, transaction);
+      }
+    });
+
+    cache.flushAll();
+
+    // الإشعارات و FCM تتم خارج المعاملة لتجنب فشل المعاملة بسبب مشكلات التسليم.
     if (userId) {
       try {
-        console.log(`🔔 Getting user document for ${userId}`);
         const userRef = db.collection('users').doc(userId);
         const userDoc = await userRef.get();
-        
         if (userDoc.exists) {
           const userData = userDoc.data() || {};
-          console.log(`👤 User found: ${userId}, has deviceTokens: ${!!userData.deviceTokens}`);
-          // تأكد من أن pointsDelta رقم حتى لو أرسلت الواجهة القيمة كسلسلة
-          const parsedPointsDelta = (pointsDelta == null) ? 0 : Number(pointsDelta);
           const pointsEarned = approved && !Number.isNaN(parsedPointsDelta) ? parsedPointsDelta : 0;
-          const pointsTextAr = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned == 1 ? 'نقطة' : 'نقط'}` : '';
-          const pointsTextEn = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned == 1 ? '' : 's'}` : '';
-          const pointsTextFr = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned == 1 ? '' : 's'}` : '';
+          const pointsTextAr = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned === 1 ? 'نقطة' : 'نقط'}` : '';
+          const pointsTextEn = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned === 1 ? '' : 's'}` : '';
+          const pointsTextFr = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned === 1 ? '' : 's'}` : '';
 
           const titleAr = approved ? 'ملف مقبول' : 'ملف مرفوض';
           const titleEn = approved ? 'File approved' : 'File rejected';
@@ -1628,15 +2096,12 @@ app.patch('/api/moderate/:id', async (req, res) => {
             ? `Votre fichier "\u202A${fileTitle}\u202C" a été approuvé ✅ ${pointsTextFr}`
             : `Votre fichier "\u202A${fileTitle}\u202C" a été rejeté ❌`;
 
-          // Prefer localized secondary/comment fields if provided by client
           const resolvedSecondaryAr = (typeof secondaryText_ar === 'string' && secondaryText_ar.trim() !== '')
             ? secondaryText_ar.trim()
             : (typeof commentAr === 'string' && commentAr.trim() !== '') ? commentAr.trim() : (comment || '');
-
           const resolvedSecondaryEn = (typeof secondaryText_en === 'string' && secondaryText_en.trim() !== '')
             ? secondaryText_en.trim()
             : (typeof commentEn === 'string' && commentEn.trim() !== '') ? commentEn.trim() : (comment || '');
-
           const resolvedSecondaryFr = (typeof secondaryText_fr === 'string' && secondaryText_fr.trim() !== '')
             ? secondaryText_fr.trim()
             : (typeof commentFr === 'string' && commentFr.trim() !== '') ? commentFr.trim() : (comment || '');
@@ -1656,45 +2121,38 @@ app.patch('/api/moderate/:id', async (req, res) => {
             secondaryText_en: resolvedSecondaryEn || '',
             secondaryText_fr: resolvedSecondaryFr || '',
             fileId: id,
-            fileTitle: fileTitle,
-            approved: approved,
+            fileTitle,
+            approved,
             pointsDelta: pointsEarned,
             comment: comment || resolvedSecondaryAr || resolvedSecondaryEn || resolvedSecondaryFr || '',
-            // Use `createdAt` and `isRead` to match the Flutter client expectations
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            // keep legacy timestamp too for compatibility
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             isRead: false,
           };
 
-          // حفظ الإشعار في Firestore
-          const notificationsRef = db.collection('users').doc(userId).collection('notifications');
+          const batch = db.batch();
+          const notificationsRef = userRef.collection('notifications');
           const notifDocRef = notificationsRef.doc();
-          await notifDocRef.set({
-            id: notifDocRef.id,
-            ...notificationData,
-          });
-          console.log(`✅ Notification saved in Firestore: ${notifDocRef.id}`);
+          batch.set(notifDocRef, { id: notifDocRef.id, ...notificationData });
+          await batch.commit();
+          console.log(`✅ Notification batch committed, docId=${notifDocRef.id}`);
 
-          // محاولة إرسال FCM notification إذا كان هناك device token
           const deviceTokens = normalizeDeviceTokens(userData);
-          console.log(`📱 Device tokens count: ${deviceTokens.length}`);
-          
-          const userLang = String(userData.language || userData.languageCode || 'ar').trim().toLowerCase();
-          const effectiveLang = ['ar', 'en', 'fr'].includes(userLang) ? userLang : 'ar';
-          const pushTitle = effectiveLang === 'ar' ? titleAr : effectiveLang === 'fr' ? titleFr : titleEn;
-          const pushBody = effectiveLang === 'ar' ? messageAr : effectiveLang === 'fr' ? messageFr : messageEn;
-
           if (Array.isArray(deviceTokens) && deviceTokens.length > 0) {
-            const messages = deviceTokens.map(token => ({
-              token,
+            const userLang = String(userData.language || userData.languageCode || 'ar').trim().toLowerCase();
+            const effectiveLang = ['ar', 'en', 'fr'].includes(userLang) ? userLang : 'ar';
+            const pushTitle = effectiveLang === 'ar' ? titleAr : effectiveLang === 'fr' ? titleFr : titleEn;
+            const pushBody = effectiveLang === 'ar' ? messageAr : effectiveLang === 'fr' ? messageFr : messageEn;
+
+            const multicastMessage = {
+              tokens: deviceTokens,
               notification: {
                 title: pushTitle,
                 body: pushBody,
               },
               data: {
                 fileId: id,
-                approved: approved.toString(),
+                approved: String(approved),
                 title_ar: titleAr,
                 title_en: titleEn,
                 title_fr: titleFr,
@@ -1721,21 +2179,21 @@ app.patch('/api/moderate/:id', async (req, res) => {
                   },
                 },
               },
-            }));
+            };
 
-            const fcmResults = await Promise.allSettled(
-              messages.map(msg =>
-                admin.messaging().send(msg)
-              )
-            );
-
-            fcmResults.forEach((result, index) => {
-              if (result.status === 'fulfilled') {
-                console.log(`✅ FCM sent for token ${index + 1}/${messages.length}`);
-              } else {
-                console.log(`❌ FCM failed for token ${index + 1}: ${result.reason?.message}`);
+            try {
+              const multicastResponse = await sendMulticastMessage(multicastMessage);
+              console.log(`✅ sendMulticast result: success=${multicastResponse.successCount} failure=${multicastResponse.failureCount}`);
+              if (multicastResponse.failureCount > 0) {
+                multicastResponse.responses.forEach((resp, index) => {
+                  if (!resp.success) {
+                    console.warn(`❌ FCM failure for token ${index}:`, resp.error?.message || resp.error);
+                  }
+                });
               }
-            });
+            } catch (multicastError) {
+              console.error('❌ sendMulticast failed:', multicastError?.message || multicastError);
+            }
           } else {
             console.log('⚠️ No device tokens found for user');
           }
@@ -1743,11 +2201,8 @@ app.patch('/api/moderate/:id', async (req, res) => {
           console.log(`❌ User document not found: ${userId}`);
         }
       } catch (notifError) {
-        console.error('❌ Failed to send notification:', notifError.message);
-        // لا نوقف العملية إذا فشل الإشعار
+        console.error('❌ Notification handling failed:', notifError?.message || notifError);
       }
-    } else {
-      console.log('❌ No userId found in file data');
     }
 
     res.json({ success: true, id, approved });
@@ -1870,8 +2325,9 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
     console.log('📌 New API endpoints:');
-    console.log('  GET  /api/subjects?year=&state=&specialty=&fileYear=');
+    console.log('  GET  /api/subjects?year=&state=&specialty=&fileYear=&page=1&limit=20');
     console.log('  GET  /api/files?subject=...&page=1&limit=20');
+    console.log('  GET  /api/pending?page=1&limit=20');
     console.log('  PATCH /api/moderate/:id');
   });
 }
@@ -1881,28 +2337,74 @@ module.exports = {
   app,
 };
 // -------------------- جلب الملفات المعلقة للمراجعة --------------------
+// Firestore composite index recommendation: reviewStatus ASC, createdAt DESC, __name__ ASC
 app.get('/api/pending', async (req, res) => {
   try {
-    // نهمل الكاش تمامًا لجلب البيانات الطازجة مباشرة من Firestore
-    const snapshot = await db.collection('files')
+    const pageNum = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
+    const queryKeyBase = 'pending';
+    const cacheKey = `pending_page_${pageNum}_${limitNum}`;
+    const cursorCacheKey = `pending_cursor_page_${pageNum}_${limitNum}`;
+    const prevCursorCacheKey = pageNum > 1 ? `pending_cursor_page_${pageNum - 1}_${limitNum}` : null;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    let query = db.collection('files')
       .where('reviewStatus', '==', 'pending')
-      .get();
+      .orderBy('createdAt', 'desc')
+      .orderBy('__name__');
 
-    const pendingFiles = [];
-    snapshot.forEach(doc => {
-      pendingFiles.push({
-        id: doc.id,
-        ...doc.data(),
-      });
-    });
+    if (pageNum > 1 && prevCursorCacheKey) {
+      const previousPageCursor = cache.get(prevCursorCacheKey);
+      if (previousPageCursor) {
+        query = query.startAfterDocument(previousPageCursor);
+      } else {
+        query = query.offset((pageNum - 1) * limitNum);
+      }
+    }
 
-    pendingFiles.sort((a, b) => {
-      const aCreated = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-      const bCreated = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-      return bCreated - aCreated;
-    });
+    const snapshot = await query.limit(limitNum).get();
+    console.log(`📌 /api/pending read ${snapshot.size} pending docs for page=${pageNum} limit=${limitNum}`);
 
-    res.json(pendingFiles);
+    const files = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (snapshot.docs.length > 0) {
+      cache.set(cursorCacheKey, snapshot.docs[snapshot.docs.length - 1]);
+    }
+
+    const maxCachedPages = 5;
+    const cachedPagesKey = 'pending_cached_pages';
+    const existingPaginationPages = cache.get(cachedPagesKey);
+    const activePages = Array.isArray(existingPaginationPages)
+      ? existingPaginationPages.map((p) => parseInt(p, 10)).filter((p) => !Number.isNaN(p))
+      : [];
+
+    if (!activePages.includes(pageNum)) {
+      activePages.push(pageNum);
+    }
+
+    while (activePages.length > maxCachedPages) {
+      const pageToRemove = activePages.shift();
+      if (pageToRemove !== undefined) {
+        const expiredCacheKey = `pending_page_${pageToRemove}_${limitNum}`;
+        const expiredCursorKey = `pending_cursor_page_${pageToRemove}_${limitNum}`;
+        cache.del(expiredCacheKey);
+        cache.del(expiredCursorKey);
+      }
+    }
+
+    cache.set(cachedPagesKey, activePages);
+
+    const response = {
+      files,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: snapshot.size === limitNum,
+    };
+
+    cache.set(cacheKey, response);
+    res.json(response);
   } catch (error) {
     console.error('Error fetching pending files:', error);
     res.status(500).json({ error: 'Failed to fetch pending files.' });
