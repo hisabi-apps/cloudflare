@@ -1726,6 +1726,12 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 //  🚀 نقاط النهاية الجديدة (API) 
 // =================================================================
 
+// Firestore composite index recommendation for subject_stats:
+// Collection: subject_stats
+// Fields: year ASC, state ASC, specialty ASC, fileYear ASC, subject ASC, __name__ ASC
+// This supports /api/subjects queries that filter by year, state, specialty, fileYear,
+// and paginate ordered by subject.
+
 // 1. جلب قائمة المواد مع عدد الملفات (مع الفلاتر والـ Cache)
 app.get('/api/subjects', async (req, res) => {
   try {
