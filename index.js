@@ -12,6 +12,7 @@ const { GoogleAuth } = require('google-auth-library');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { shouldBlockDuplicateUpload } = require('./duplicate_policy');
 const { computeTextFingerprint, isTextLikeFile } = require('./content_fingerprint');
+const { buildExerciseFileDocument } = require('./file_doc_builder');
 
 function computeFileHash(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -1239,6 +1240,9 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     const objectKey = requestedObjectKey
       ? requestedObjectKey.replace(/^\/+/, '')
       : buildObjectKey(subject, title, req.file.originalname);
+    const textFingerprint = isTextLikeFile(req.file.originalname, req.file.mimetype)
+      ? computeTextFingerprint(fileBuffer.toString('utf8'))
+      : '';
 
     // 1. رفع الملف إلى R2
     const command = new PutObjectCommand({
@@ -1301,37 +1305,29 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       }
 
       // 3. إضافة وثيقة جديدة في مجموعة "files"
-      const newFileDoc = {
-        subject: subject.trim(),
-        title: title.trim(),
+      const optionalFields = {
+        year: req.body.year,
+        state: req.body.state,
+        specialty: req.body.specialty,
+        fileYear: req.body.fileYear,
+        system: req.body.system,
+        semester: req.body.semester,
+      };
+      const newFileDoc = buildExerciseFileDocument({
+        subject,
+        title,
         name: req.file.originalname,
         url: publicUrl,
         storagePath: objectKey,
-        storageType: 'cloudflare-r2',
-        isApproved: isAdmin,
-        reviewStatus: isAdmin ? 'approved' : 'pending',
         uploadedByUid,
         uploadedByEmail: req.body.uploadedByEmail || '',
+        isApproved: isAdmin,
+        reviewStatus: isAdmin ? 'approved' : 'pending',
         fileHash,
         textFingerprint,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      };
-
-      // إضافة الحقول الاختيارية
-      const textFingerprint = isTextLikeFile(req.file.originalname, req.file.mimetype)
-        ? computeTextFingerprint(fileBuffer.toString('utf8'))
-        : '';
-
-      const optionalFields = ['year', 'state', 'specialty', 'fileYear', 'system', 'semester'];
-      for (const field of optionalFields) {
-        if (req.body[field]) {
-          const trimmedValue = req.body[field].trim();
-          newFileDoc[field] = trimmedValue;
-          if (field === 'specialty') {
-            newFileDoc.specialtyNormalized = normalizeText(trimmedValue);
-          }
-        }
-      }
+        optionalFields,
+      });
 
       docRef = await db.collection('files').add(newFileDoc);
     }
