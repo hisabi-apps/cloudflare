@@ -13,6 +13,7 @@ const { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObj
 const { shouldBlockDuplicateUpload } = require('./duplicate_policy');
 const { computeTextFingerprint, isTextLikeFile } = require('./content_fingerprint');
 const { buildExerciseFileDocument } = require('./file_doc_builder');
+const { findMatchingDuplicateInDocs } = require('./duplicate_lookup');
 
 function computeFileHash(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -61,13 +62,21 @@ async function findExistingDuplicate(fileHash, currentFileId = '', options = {})
   try {
     const fastQuery = await db.collection('files')
       .where('fileHash', '==', fileHash)
-      .limit(1)
+      .limit(20)
       .get();
 
     if (!fastQuery.empty) {
-      const first = fastQuery.docs[0];
-      if ((currentFileId || '').toString().trim() !== first.id) {
-        return first;
+      const match = await findMatchingDuplicateInDocs({
+        docs: fastQuery.docs,
+        fileHash,
+        currentFileId,
+        fileBuffer,
+        fileName,
+        mimeType,
+        getOrComputeFileHash: async (doc) => getOrComputeFileHash(doc),
+      });
+      if (match) {
+        return match;
       }
     }
   } catch (error) {
@@ -75,28 +84,17 @@ async function findExistingDuplicate(fileHash, currentFileId = '', options = {})
   }
 
   try {
-    const fallbackSnapshot = await db.collection('files').limit(20).get();
-    for (const doc of fallbackSnapshot.docs) {
-      if ((currentFileId || '').toString().trim() === doc.id) {
-        continue;
-      }
-
-      const data = doc.data() || {};
-      const candidateHash = data.fileHash || (await getOrComputeFileHash(doc));
-      if (candidateHash && candidateHash === fileHash) {
-        return doc;
-      }
-
-      if (fileBuffer && isTextLikeFile(fileName, mimeType)) {
-        const candidateTextFingerprint = typeof data.textFingerprint === 'string' ? data.textFingerprint : '';
-        if (candidateTextFingerprint) {
-          const currentTextFingerprint = computeTextFingerprint(fileBuffer.toString('utf8'));
-          if (currentTextFingerprint && currentTextFingerprint === candidateTextFingerprint) {
-            return doc;
-          }
-        }
-      }
-    }
+    const fallbackSnapshot = await db.collection('files').limit(100).get();
+    const match = await findMatchingDuplicateInDocs({
+      docs: fallbackSnapshot.docs,
+      fileHash,
+      currentFileId,
+      fileBuffer,
+      fileName,
+      mimeType,
+      getOrComputeFileHash: async (doc) => getOrComputeFileHash(doc),
+    });
+    return match;
   } catch (error) {
     console.warn('⚠️ Fallback duplicate scan failed:', error.message || error);
   }
