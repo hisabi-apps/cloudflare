@@ -1806,7 +1806,9 @@ app.get('/api/subjects', async (req, res) => {
     if (fileYearFromFilter != null) query = query.where('fileYear', '>=', fileYearFromFilter);
     if (fileYearToFilter != null) query = query.where('fileYear', '<=', fileYearToFilter);
 
-    query = query.orderBy('subject').orderBy('__name__');
+    // Firestore requires a single ordering chain for this query. Using a single
+    // orderBy on the subject field avoids the invalid composite ordering error.
+    query = query.orderBy('subject');
     if (pageNum > 1 && prevCursorCacheKey) {
       const previousPageCursor = cache.get(prevCursorCacheKey);
       if (previousPageCursor) {
