@@ -1991,8 +1991,8 @@ app.get('/api/subjects', async (req, res) => {
     let items = [];
     let snapshotSize = 0;
 
-    if (hasActiveFilters) {
-      console.log('🧠 /api/subjects using files aggregation for active filters');
+    const buildSubjectItemsFromFiles = async () => {
+      console.log('🧠 /api/subjects falling back to files aggregation');
       const fallbackSnapshot = await db.collection('files').where('isApproved', '==', true).get();
       const subjectMap = new Map();
 
@@ -2025,12 +2025,16 @@ app.get('/api/subjects', async (req, res) => {
         entry.files.push({ id: doc.id, ...data });
       });
 
-      items = Array.from(subjectMap.entries()).map(([subjectName, info]) => ({
+      return Array.from(subjectMap.entries()).map(([subjectName, info]) => ({
         subject: subjectName,
         count: info.count,
         specialties: Array.from(info.specialties).sort(),
         files: info.files.slice(0, 50),
       }));
+    };
+
+    if (hasActiveFilters) {
+      items = await buildSubjectItemsFromFiles();
       snapshotSize = items.length;
     } else {
       let query = db.collection('subject_stats');
@@ -2045,15 +2049,20 @@ app.get('/api/subjects', async (req, res) => {
       const snapshot = await query.limit(limitNum).get();
       console.log(`📊 /api/subjects read ${snapshot.size} subject_stats docs for page=${pageNum} limit=${limitNum}`);
 
-      items = snapshot.docs.map(doc => {
-        const data = doc.data() || {};
-        return {
-          subject: data.subjectDisplay || data.subject || 'عام',
-          count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
-          specialties: Array.isArray(data.specialties) ? data.specialties : [],
-        };
-      });
-      snapshotSize = snapshot.size;
+      if (snapshot.empty) {
+        items = await buildSubjectItemsFromFiles();
+        snapshotSize = items.length;
+      } else {
+        items = snapshot.docs.map(doc => {
+          const data = doc.data() || {};
+          return {
+            subject: data.subjectDisplay || data.subject || 'عام',
+            count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
+            specialties: Array.isArray(data.specialties) ? data.specialties : [],
+          };
+        });
+        snapshotSize = snapshot.size;
+      }
     }
 
     const offset = (pageNum - 1) * limitNum;
