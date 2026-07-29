@@ -2296,9 +2296,9 @@ app.patch('/api/moderate/:id', async (req, res) => {
         if (userDoc.exists) {
           const userData = userDoc.data() || {};
           const pointsEarned = approved && !Number.isNaN(parsedPointsDelta) ? parsedPointsDelta : 0;
-          const pointsTextAr = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned === 1 ? 'نقطة' : 'نقط'}` : '';
-          const pointsTextEn = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned === 1 ? '' : 's'}` : '';
-          const pointsTextFr = approved && pointsEarned > 0 ? ` +${pointsEarned} point${pointsEarned === 1 ? '' : 's'}` : '';
+          const pointsTextAr = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned === 1 ? 'نجمة' : 'نجوم'}` : '';
+          const pointsTextEn = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned === 1 ? 'star' : 'stars'}` : '';
+          const pointsTextFr = approved && pointsEarned > 0 ? ` +${pointsEarned} ${pointsEarned === 1 ? 'étoile' : 'étoiles'}` : '';
 
           const titleAr = approved ? 'ملف مقبول' : 'ملف مرفوض';
           const titleEn = approved ? 'File approved' : 'File rejected';
