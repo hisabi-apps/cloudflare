@@ -1808,8 +1808,15 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded.' });
     }
 
-    const subject = req.body.subject || 'عام';
-    const title = req.body.title || path.parse(req.file.originalname).name;
+    const subject = (req.body.subject || '').toString().trim();
+    if (!subject) {
+      return res.status(400).json({
+        error: 'missing_subject',
+        message: 'Subject is required.',
+      });
+    }
+
+    const title = (req.body.title || path.parse(req.file.originalname).name).toString().trim();
     const uploadedByUid = (req.body.uploadedByUid || 'anonymous').toString();
     const requestedObjectKey = (req.body.objectKey || '').toString().trim();
     const fileBuffer = req.file.buffer;
