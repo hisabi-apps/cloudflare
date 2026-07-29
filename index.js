@@ -1917,7 +1917,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         await db.collection('file_signatures').doc(fileHash).set(
           {
             fileHash,
-            relatedFileIds: FieldValue.arrayUnion(docRef.id),
+            relatedFileIds: admin.firestore.FieldValue.arrayUnion(docRef.id),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },
