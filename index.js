@@ -722,19 +722,6 @@ const rawSubject = (data.subject || 'عام').toString();
 
     console.log(`🔁 Rebuilding subject_stats from ${approvedFilesSnapshot.size} approved files into ${statsMap.size} stats docs`);
 
-    // حذف كل وثائق subject_stats الحالية أولاً ثم إعادة الكتابة.
-    let deletedCount = 0;
-    while (true) {
-      const snapshot = await db.collection('subject_stats').limit(500).get();
-      if (snapshot.empty) break;
-      const deleteBatch = db.batch();
-      snapshot.docs.forEach((existingDoc) => deleteBatch.delete(existingDoc.ref));
-      await deleteBatch.commit();
-      deletedCount += snapshot.size;
-      if (snapshot.size < 500) break;
-    }
-    console.log(`🧹 Deleted ${deletedCount} existing subject_stats docs before rebuild.`);
-
     let writeCount = 0;
     let batch = db.batch();
     for (const [docId, value] of statsMap.entries()) {
@@ -749,7 +736,7 @@ const rawSubject = (data.subject || 'عام').toString();
         count: value.count,
         specialties: Array.from(value.specialties).sort(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: false });
+      }, { merge: true });
       writeCount += 1;
 
       if (writeCount % 400 === 0) {
