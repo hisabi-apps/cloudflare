@@ -582,6 +582,135 @@ async function verifyAdminRequest(req, res) {
   return { uid: currentUid, userData: senderData };
 }
 
+async function rebuildSubjectStatsFromApprovedFiles({ batchSize = 500 } = {}) {
+  const statsMap = new Map();
+  let processedFiles = 0;
+  let page = 0;
+  let lastDocSnapshot = null;
+
+  while (true) {
+    let query = db
+      .collection('files')
+      .where('isApproved', '==', true)
+      .orderBy(admin.firestore.FieldPath.documentId())
+      .limit(batchSize);
+
+    if (lastDocSnapshot) {
+      query = query.startAfter(lastDocSnapshot);
+    }
+
+    const approvedFilesSnapshot = await query.get();
+    if (approvedFilesSnapshot.empty) {
+      break;
+    }
+
+    page += 1;
+    approvedFilesSnapshot.forEach((doc) => {
+      const data = doc.data() || {};
+      const rawSubject = (data.subject || 'عام').toString();
+      const subject = normalizeText(rawSubject);
+      const subjectDisplay = rawSubject.trim();
+      const yearValue = normalizeStatsFilterValue(data.year || 'all');
+      const stateValue = normalizeStatsFilterValue(data.state || 'all');
+      const specialtyValue = normalizeStatsFilterValue(data.specialty || 'all');
+      const fileYearValue = (() => {
+        if (data.fileYear == null || data.fileYear === '') {
+          return 'all';
+        }
+        const numeric = Number(data.fileYear);
+        return Number.isNaN(numeric) ? normalizeStatsFilterValue(data.fileYear) : numeric;
+      })();
+
+      const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
+      const filterValues = {
+        year: yearValue,
+        state: stateValue,
+        specialty: specialtyValue,
+        fileYear: fileYearValue,
+      };
+
+      for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
+        const combo = {
+          subject,
+          year: 'all',
+          state: 'all',
+          specialty: 'all',
+          fileYear: 'all',
+        };
+
+        filterGroups.forEach((group, index) => {
+          if (mask & (1 << index)) {
+            combo[group] = filterValues[group] ?? 'all';
+          }
+        });
+
+        const docId = buildSubjectStatsDocId(combo);
+        const existing = statsMap.get(docId) || {
+          subject,
+          subjectDisplay,
+          year: combo.year,
+          state: combo.state,
+          specialty: combo.specialty,
+          fileYear: combo.fileYear,
+          count: 0,
+          specialties: new Set(),
+        };
+
+        existing.count += 1;
+        if (specialtyValue !== 'all') {
+          existing.specialties.add(specialtyValue);
+        }
+        statsMap.set(docId, existing);
+      }
+
+      processedFiles += 1;
+    });
+
+    if (approvedFilesSnapshot.size < batchSize) {
+      break;
+    }
+
+    lastDocSnapshot = approvedFilesSnapshot.docs[approvedFilesSnapshot.docs.length - 1];
+  }
+
+  let writeCount = 0;
+  let firestoreBatch = db.batch();
+  for (const [docId, value] of statsMap.entries()) {
+    const statsRef = db.collection('subject_stats').doc(docId);
+    firestoreBatch.set(
+      statsRef,
+      {
+        subject: value.subject,
+        subjectDisplay: value.subjectDisplay,
+        year: value.year,
+        state: value.state,
+        specialty: value.specialty,
+        fileYear: value.fileYear,
+        count: value.count,
+        specialties: Array.from(value.specialties).sort(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    writeCount += 1;
+
+    if (writeCount % 400 === 0) {
+      await firestoreBatch.commit();
+      firestoreBatch = db.batch();
+    }
+  }
+
+  if (writeCount % 400 !== 0) {
+    await firestoreBatch.commit();
+  }
+
+  return {
+    processedFiles,
+    statsDocs: statsMap.size,
+    pages: page,
+  };
+}
+
 app.post('/api/notifications/mark-opened', async (req, res) => {
   try {
     const authHeader = req.headers.authorization || '';
@@ -651,104 +780,19 @@ app.post('/api/admin/rebuild-stats', async (req, res) => {
       return;
     }
 
-    console.log('🔧 Admin rebuild-stats requested by', adminRequest.uid);
+    console.log('🔧 Manual admin rebuild-stats requested by', adminRequest.uid);
 
-    const approvedFilesSnapshot = await db.collection('files')
-      .where('isApproved', '==', true)
-      .get();
-
-    const statsMap = new Map();
-
-    const normalizeFileYear = (rawValue) => {
-      if (rawValue == null || rawValue === '') {
-        return 'all';
-      }
-      const numeric = Number(rawValue);
-      return Number.isNaN(numeric) ? normalizeStatsFilterValue(rawValue) : numeric;
-    };
-
-    approvedFilesSnapshot.forEach((doc) => {
-      const data = doc.data() || {};
-const rawSubject = (data.subject || 'عام').toString();
-        const subject = normalizeText(rawSubject);
-        const subjectDisplay = rawSubject.trim();
-      const yearValue = normalizeStatsFilterValue(data.year || 'all');
-      const stateValue = normalizeStatsFilterValue(data.state || 'all');
-      const specialtyValue = normalizeStatsFilterValue(data.specialty || 'all');
-      const fileYearValue = normalizeFileYear(data.fileYear || 'all');
-
-      const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
-      const filterValues = {
-        year: yearValue,
-        state: stateValue,
-        specialty: specialtyValue,
-        fileYear: fileYearValue,
-      };
-
-      for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
-        const combo = {
-          subject,
-          year: 'all',
-          state: 'all',
-          specialty: 'all',
-          fileYear: 'all',
-        };
-
-        filterGroups.forEach((group, index) => {
-          if (mask & (1 << index)) {
-            combo[group] = filterValues[group] ?? 'all';
-          }
-        });
-
-        const docId = buildSubjectStatsDocId(combo);
-        const existing = statsMap.get(docId) || {
-          subject: subject,
-          subjectDisplay: subjectDisplay,
-          year: combo.year,
-          state: combo.state,
-          specialty: combo.specialty,
-          fileYear: combo.fileYear,
-          count: 0,
-          specialties: new Set(),
-        };
-
-        existing.count += 1;
-        if (specialtyValue !== 'all') {
-          existing.specialties.add(specialtyValue);
-        }
-        statsMap.set(docId, existing);
-      }
-    });
-
-    console.log(`🔁 Rebuilding subject_stats from ${approvedFilesSnapshot.size} approved files into ${statsMap.size} stats docs`);
-
-    let writeCount = 0;
-    let batch = db.batch();
-    for (const [docId, value] of statsMap.entries()) {
-      const statsRef = db.collection('subject_stats').doc(docId);
-      batch.set(statsRef, {
-        subject: value.subject,
-        subjectDisplay: value.subjectDisplay,
-        year: value.year,
-        state: value.state,
-        specialty: value.specialty,
-        fileYear: value.fileYear,
-        count: value.count,
-        specialties: Array.from(value.specialties).sort(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
-      writeCount += 1;
-
-      if (writeCount % 400 === 0) {
-        await batch.commit();
-        batch = db.batch();
-      }
-    }
-    await batch.commit();
+    const result = await rebuildSubjectStatsFromApprovedFiles({ batchSize: 500 });
 
     cache.flushAll();
 
-    return res.json({ success: true, updated: statsMap.size });
+    return res.json({
+      success: true,
+      manual: true,
+      updated: result.statsDocs,
+      processedFiles: result.processedFiles,
+      pages: result.pages,
+    });
   } catch (error) {
     console.error('Failed to rebuild subject_stats:', error);
     return res.status(500).json({ error: 'Failed to rebuild subject_stats.' });
@@ -1918,6 +1962,24 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         );
       }
 
+      if (uploadedByUid && uploadedByUid !== 'anonymous') {
+        const userRef = db.collection('users').doc(uploadedByUid);
+        const pendingDelta = newFileDoc.isApproved ? 0 : 1;
+        const approvedDelta = newFileDoc.isApproved ? 1 : 0;
+        const rejectedDelta = 0;
+
+        await userRef.set(
+          {
+            totalUploads: admin.firestore.FieldValue.increment(1),
+            approvedFiles: admin.firestore.FieldValue.increment(approvedDelta),
+            rejectedFiles: admin.firestore.FieldValue.increment(rejectedDelta),
+            pendingFiles: admin.firestore.FieldValue.increment(pendingDelta),
+            lastUploadUpdate: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+
       if (docRef && newFileDoc.isApproved) {
         updateSubjectStats(newFileDoc).catch((statsError) => {
           console.error('⚠️ subject_stats update failed during upload:', statsError.message || statsError);
@@ -2246,30 +2308,48 @@ app.patch('/api/moderate/:id', async (req, res) => {
         moderatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      if (approved && userId && parsedPointsDelta !== 0) {
+      if (userId) {
         const userRef = db.collection('users').doc(userId);
         const userStatsRef = userRef.collection('stats').doc('profile');
 
-        transaction.set(
-          userRef,
-          {
-            points: admin.firestore.FieldValue.increment(parsedPointsDelta),
-            lastPointsUpdate: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
+        const moderationUpdate = {
+          lastModerationUpdate: admin.firestore.FieldValue.serverTimestamp(),
+        };
 
-        transaction.set(
-          userStatsRef,
-          {
-            points: admin.firestore.FieldValue.increment(parsedPointsDelta),
-          },
-          { merge: true },
-        );
-      }
+        if (approved) {
+          moderationUpdate.approvedFiles = admin.firestore.FieldValue.increment(1);
+          moderationUpdate.totalUploads = admin.firestore.FieldValue.increment(1);
+          moderationUpdate.pendingFiles = admin.firestore.FieldValue.increment(-1);
+          moderationUpdate.rejectedFiles = admin.firestore.FieldValue.increment(0);
+        } else {
+          moderationUpdate.rejectedFiles = admin.firestore.FieldValue.increment(1);
+          moderationUpdate.pendingFiles = admin.firestore.FieldValue.increment(-1);
+        }
 
-      if (approved) {
-        await updateSubjectStatsTransaction(fileSnapshot.data() || fileData, 1, transaction);
+        transaction.set(userRef, moderationUpdate, { merge: true });
+
+        if (approved && parsedPointsDelta !== 0) {
+          transaction.set(
+            userRef,
+            {
+              points: admin.firestore.FieldValue.increment(parsedPointsDelta),
+              lastPointsUpdate: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+
+          transaction.set(
+            userStatsRef,
+            {
+              points: admin.firestore.FieldValue.increment(parsedPointsDelta),
+            },
+            { merge: true },
+          );
+        }
+
+        if (approved) {
+          await updateSubjectStatsTransaction(fileSnapshot.data() || fileData, 1, transaction);
+        }
       }
     });
 
