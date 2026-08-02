@@ -1,32 +1,6 @@
-const { parseBooleanLike } = require('../utils/validators');
+const { parseBooleanLike, resolveNotificationMetadata } = require('../utils/validators');
 
 function createNotificationService({ admin, db }) {
-  function resolveNotificationMetadata(requestBody = {}) {
-    const clientData = requestBody?.data && typeof requestBody.data === 'object' ? requestBody.data : {};
-
-    const category =
-      typeof clientData.category === 'string' && clientData.category.trim() !== ''
-        ? clientData.category.trim()
-        : typeof requestBody?.category === 'string' && requestBody.category.trim() !== ''
-          ? requestBody.category.trim()
-          : 'general';
-
-    const notificationType =
-      typeof clientData.notificationType === 'string' && clientData.notificationType.trim() !== ''
-        ? clientData.notificationType.trim()
-        : typeof requestBody?.notificationType === 'string' && requestBody.notificationType.trim() !== ''
-          ? requestBody.notificationType.trim()
-          : 'admin_message';
-
-    const isImportant = parseBooleanLike(clientData.isImportant ?? requestBody?.isImportant);
-
-    return {
-      category,
-      notificationType,
-      isImportant,
-    };
-  }
-
   function getLocalizedField(requestBody, field, lang) {
     const languageCode = (lang || 'ar').toString().trim().toLowerCase();
     const fieldKey = `${field}_${languageCode}`;

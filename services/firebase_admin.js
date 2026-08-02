@@ -141,7 +141,9 @@ function createFirebaseAdminService({ admin, db, serviceAccount, axiosClient = a
   async function verifyAdminRequest(req, res) {
     const authHeader = req.headers.authorization || '';
     if (!authHeader.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'Unauthorized request.' });
+      if (res && typeof res.status === 'function') {
+        res.status(401).json({ error: 'Unauthorized request.' });
+      }
       return null;
     }
 
@@ -151,13 +153,17 @@ function createFirebaseAdminService({ admin, db, serviceAccount, axiosClient = a
       decodedToken = await admin.auth().verifyIdToken(idToken);
     } catch (tokenError) {
       console.error('⚠️ Invalid auth token in admin request:', tokenError);
-      res.status(401).json({ error: 'Unauthorized request.' });
+      if (res && typeof res.status === 'function') {
+        res.status(401).json({ error: 'Unauthorized request.' });
+      }
       return null;
     }
 
     const currentUid = decodedToken?.uid;
     if (!currentUid) {
-      res.status(401).json({ error: 'Unauthorized request.' });
+      if (res && typeof res.status === 'function') {
+        res.status(401).json({ error: 'Unauthorized request.' });
+      }
       return null;
     }
 
@@ -165,11 +171,13 @@ function createFirebaseAdminService({ admin, db, serviceAccount, axiosClient = a
     const senderEmail = decodedToken.email || '';
     const senderData = senderDoc.exists ? senderDoc.data() : null;
     if (!senderDoc.exists || !isAdminUserData(senderData, senderEmail)) {
-      res.status(403).json({ error: 'Not authorized.' });
+      if (res && typeof res.status === 'function') {
+        res.status(403).json({ error: 'Not authorized.' });
+      }
       return null;
     }
 
-    return { uid: currentUid, userData: senderData };
+    return { uid: currentUid, userData: senderData, authorized: true, senderUid: currentUid, senderEmail };
   }
 
   return {

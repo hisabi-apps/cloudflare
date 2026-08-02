@@ -1,28 +1,18 @@
 const express = require('express');
+const { createFirebaseAdminService } = require('../../../services/firebase_admin');
 
 module.exports = function createAdminSendFcmRouter({ admin, db, isAdminUserData, normalizeRecipientData, persistAdminNotificationToUsers, resolveNotificationMetadata, getLocalizedField, sendFcmWithFallback, sendMulticastMessage, normalizeDeviceTokens, removeInvalidDeviceToken }) {
   const router = express.Router();
+  const { verifyAdminRequest } = createFirebaseAdminService({ admin, db, serviceAccount: {} });
 
   router.post('/', async (req, res) => {
     try {
-      const authHeader = req.headers.authorization || '';
-      if (!authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Unauthorized request.' });
-      }
-
-      const idToken = authHeader.split(' ')[1];
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      if (!decodedToken?.uid) {
-        return res.status(401).json({ error: 'Unauthorized request.' });
-      }
-
-      const senderUid = decodedToken.uid;
-      const senderEmail = decodedToken.email || '';
-      const senderRef = db.collection('users').doc(senderUid);
-      const senderDoc = await senderRef.get();
-      if (!senderDoc.exists || !isAdminUserData(senderDoc.data(), senderEmail)) {
+      const adminAuthContext = await verifyAdminRequest(req, res);
+      if (!adminAuthContext?.authorized) {
         return res.status(403).json({ error: 'Not authorized to send notifications.' });
       }
+
+      const { senderUid } = adminAuthContext;
 
       const requestBody = req.body || {};
       const title = requestBody.title;
