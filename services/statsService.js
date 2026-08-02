@@ -4,9 +4,12 @@ const {
   normalizeStateValue,
 } = require('../utils/normalize');
 
-function buildSubjectStatsDocId({ subject, year, state, specialty, fileYear }) {
+function buildSubjectStatsDocId({ subject, type, year, state, specialty, fileYear }) {
   const normalized = {
     subject: normalizeText(subject || 'عام'),
+    type: ['exercise', 'exam'].includes((type || 'exercise').toString().trim().toLowerCase())
+      ? (type || 'exercise').toString().trim().toLowerCase()
+      : 'exercise',
     year: normalizeStatsFilterValue(year),
     state: normalizeStateValue(state),
     specialty: normalizeStatsFilterValue(specialty),
@@ -14,6 +17,7 @@ function buildSubjectStatsDocId({ subject, year, state, specialty, fileYear }) {
   };
 
   return [
+    `type_${normalized.type}`,
     `subject_${normalized.subject}`,
     `year_${normalized.year}`,
     `state_${normalized.state}`,
@@ -24,6 +28,9 @@ function buildSubjectStatsDocId({ subject, year, state, specialty, fileYear }) {
 
 function buildSubjectStatsEntries(fileRecord, delta = 1) {
   const subject = fileRecord.subject || 'عام';
+  const typeValue = ['exercise', 'exam'].includes((fileRecord.type || 'exercise').toString().trim().toLowerCase())
+    ? (fileRecord.type || 'exercise').toString().trim().toLowerCase()
+    : 'exercise';
   const yearValue = fileRecord.year || 'all';
   const stateValue = fileRecord.state || 'all';
   const specialtyValue = fileRecord.specialty || 'all';
@@ -52,6 +59,7 @@ function buildSubjectStatsEntries(fileRecord, delta = 1) {
   for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
     const combo = {
       subject: subjectNormalized,
+      type: typeValue,
       year: 'all',
       state: 'all',
       specialty: 'all',
@@ -74,6 +82,7 @@ function buildSubjectStatsEntries(fileRecord, delta = 1) {
       docId,
       subject: subjectNormalized,
       subjectDisplay: subject,
+      type: typeValue,
       year: combo.year,
       state: combo.state,
       specialty: combo.specialty,
@@ -155,6 +164,7 @@ function createSubjectStatsService({ admin, db, cache, uploadPrefix = 'exercices
         entries.forEach((entry) => {
           const statsRef = db.collection('subject_stats').doc(entry.docId);
           const updatePayload = {
+            type: entry.type,
             subject: entry.subject,
             subjectDisplay: entry.subjectDisplay,
             year: entry.year,
@@ -244,6 +254,7 @@ function createSubjectStatsService({ admin, db, cache, uploadPrefix = 'exercices
     entries.forEach((entry) => {
       const statsRef = db.collection('subject_stats').doc(entry.docId);
       const updatePayload = {
+        type: entry.type,
         subject: entry.subject,
         subjectDisplay: entry.subjectDisplay,
         year: entry.year,

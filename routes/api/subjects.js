@@ -11,10 +11,13 @@ module.exports = function createSubjectsRouter({ db, cache }) {
 
   router.get('/', async (req, res) => {
     try {
-      const { year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 10 } = req.query;
+      const { year, state, specialty, fileYear, fileYearFrom, fileYearTo, type, page = 1, limit = 10 } = req.query;
       const pageNum = Math.max(parseInt(page, 10) || 1, 1);
       const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
-      const queryKeyBase = `subject_stats_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
+      const normalizedType = ['exercise', 'exam'].includes((type || 'exercise').toString().trim().toLowerCase())
+        ? (type || 'exercise').toString().trim().toLowerCase()
+        : 'exercise';
+      const queryKeyBase = `subject_stats_${normalizedType}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
       const cacheKey = `${queryKeyBase}_${pageNum}_${limitNum}`;
 
       const cached = cache.get(cacheKey);
@@ -40,7 +43,10 @@ module.exports = function createSubjectsRouter({ db, cache }) {
 
       const buildSubjectItemsFromFiles = async () => {
         console.log('🧠 /api/subjects falling back to files aggregation');
-        const fallbackSnapshot = await db.collection('files').where('isApproved', '==', true).get();
+        const fallbackSnapshot = await db.collection('files')
+          .where('type', '==', normalizedType)
+          .where('isApproved', '==', true)
+          .get();
         const subjectMap = new Map();
 
         fallbackSnapshot.forEach((doc) => {
@@ -91,21 +97,26 @@ module.exports = function createSubjectsRouter({ db, cache }) {
         if (fileYearFromFilter != null) query = query.where('fileYear', '>=', fileYearFromFilter);
         if (fileYearToFilter != null) query = query.where('fileYear', '<=', fileYearToFilter);
 
-        query = query.orderBy('subject');
-        const snapshot = await query.limit(limitNum).get();
+        const snapshot = await query.get();
         console.log(`📊 /api/subjects read ${snapshot.size} subject_stats docs for page=${pageNum} limit=${limitNum}`);
 
         if (snapshot.empty) {
           items = await buildSubjectItemsFromFiles();
         } else {
-          items = snapshot.docs.map((doc) => {
-            const data = doc.data() || {};
-            return {
-              subject: data.subjectDisplay || data.subject || 'عام',
-              count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
-              specialties: Array.isArray(data.specialties) ? data.specialties : [],
-            };
-          });
+          items = snapshot.docs
+            .map((doc) => {
+              const data = doc.data() || {};
+              const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
+              if (normalizedType === 'exam' ? docType !== 'exam' : docType !== 'exercise' && docType !== '') {
+                return null;
+              }
+              return {
+                subject: data.subjectDisplay || data.subject || 'عام',
+                count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
+                specialties: Array.isArray(data.specialties) ? data.specialties : [],
+              };
+            })
+            .filter(Boolean);
         }
       }
 
