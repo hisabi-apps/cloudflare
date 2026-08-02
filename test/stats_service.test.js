@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createSubjectStatsService, normalizeStateValue, matchesFileFilters } = require('../services/statsService');
+const { createSubjectStatsService, normalizeStateValue, matchesFileFilters, buildSubjectStatsEntries } = require('../services/statsService');
 
 test('sanitizeSegment removes unsafe characters and normalizes spacing', () => {
   const service = createSubjectStatsService({ admin: {}, db: {}, cache: { flushAll() {} } });
@@ -49,4 +49,18 @@ test('matchesFileFilters respects the requested filters', () => {
     fileYearFromFilter: null,
     fileYearToFilter: null,
   }), false);
+});
+
+test('buildSubjectStatsEntries creates one aggregation entry per filter combination', () => {
+  const entries = buildSubjectStatsEntries({
+    subject: 'رياضيات',
+    year: '2024',
+    state: 'الجزائر',
+    specialty: 'علوم',
+    fileYear: 2023,
+  }, 1);
+
+  assert.equal(entries.length, 16);
+  assert.ok(entries.some((entry) => entry.docId.includes('year_2024') && entry.docId.includes('state_alger') && entry.docId.includes('specialty_علوم') && entry.docId.includes('fileYear_2023')));
+  assert.ok(entries.some((entry) => entry.docId.includes('year_all') && entry.docId.includes('state_all') && entry.docId.includes('specialty_all') && entry.docId.includes('fileYear_all')));
 });

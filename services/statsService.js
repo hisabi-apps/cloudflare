@@ -8,7 +8,7 @@ function buildSubjectStatsDocId({ subject, year, state, specialty, fileYear }) {
   const normalized = {
     subject: normalizeText(subject || 'عام'),
     year: normalizeStatsFilterValue(year),
-    state: normalizeStatsFilterValue(state),
+    state: normalizeStateValue(state),
     specialty: normalizeStatsFilterValue(specialty),
     fileYear: normalizeStatsFilterValue(fileYear),
   };
@@ -20,6 +20,70 @@ function buildSubjectStatsDocId({ subject, year, state, specialty, fileYear }) {
     `specialty_${normalized.specialty}`,
     `fileYear_${normalized.fileYear}`,
   ].join('|');
+}
+
+function buildSubjectStatsEntries(fileRecord, delta = 1) {
+  const subject = fileRecord.subject || 'عام';
+  const yearValue = fileRecord.year || 'all';
+  const stateValue = fileRecord.state || 'all';
+  const specialtyValue = fileRecord.specialty || 'all';
+  const fileYearRaw = fileRecord.fileYear;
+  const fileYearValue = typeof fileYearRaw === 'number' || !Number.isNaN(Number(fileYearRaw))
+    ? Number(fileYearRaw)
+    : 'all';
+
+  const subjectNormalized = normalizeText(subject);
+  const yearNormalized = normalizeStatsFilterValue(yearValue);
+  const stateNormalized = normalizeStateValue(stateValue);
+  const specialtyNormalized = normalizeStatsFilterValue(specialtyValue);
+  const countDelta = Number.isNaN(Number(delta)) ? 1 : Number(delta);
+
+  const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
+  const filterValues = {
+    year: yearNormalized,
+    state: stateNormalized,
+    specialty: specialtyNormalized,
+    fileYear: fileYearValue,
+  };
+
+  const entries = [];
+  const seenDocIds = new Set();
+
+  for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
+    const combo = {
+      subject: subjectNormalized,
+      year: 'all',
+      state: 'all',
+      specialty: 'all',
+      fileYear: 'all',
+    };
+
+    filterGroups.forEach((group, index) => {
+      if (mask & (1 << index)) {
+        combo[group] = filterValues[group] ?? 'all';
+      }
+    });
+
+    const docId = buildSubjectStatsDocId(combo);
+    if (seenDocIds.has(docId)) {
+      continue;
+    }
+    seenDocIds.add(docId);
+
+    entries.push({
+      docId,
+      subject: subjectNormalized,
+      subjectDisplay: subject,
+      year: combo.year,
+      state: combo.state,
+      specialty: combo.specialty,
+      fileYear: combo.fileYear,
+      specialties: specialtyNormalized !== 'all' && countDelta > 0 ? [specialtyNormalized] : [],
+      delta: countDelta,
+    });
+  }
+
+  return entries;
 }
 
 function matchesFileFilters(data, {
@@ -61,11 +125,12 @@ function matchesFileFilters(data, {
 }
 
 function createSubjectStatsService({ admin, db, cache, uploadPrefix = 'exercices' }) {
-  async function rebuildSubjectStatsFromApprovedFiles({ batchSize = 500 } = {}) {
-    const statsMap = new Map();
+  async function rebuildSubjectStatsFromApprovedFiles({ batchSize = 500, writeBatchSize = 400 } = {}) {
     let processedFiles = 0;
     let page = 0;
     let lastDocSnapshot = null;
+    let writeCount = 0;
+    let firestoreBatch = db.batch();
 
     while (true) {
       let query = db
@@ -85,65 +150,37 @@ function createSubjectStatsService({ admin, db, cache, uploadPrefix = 'exercices
 
       page += 1;
       approvedFilesSnapshot.forEach((doc) => {
-        const data = doc.data() || {};
-        const rawSubject = (data.subject || 'عام').toString();
-        const subject = normalizeText(rawSubject);
-        const subjectDisplay = rawSubject.trim();
-        const yearValue = normalizeStatsFilterValue(data.year || 'all');
-        const stateValue = normalizeStatsFilterValue(data.state || 'all');
-        const specialtyValue = normalizeStatsFilterValue(data.specialty || 'all');
-        const fileYearValue = (() => {
-          if (data.fileYear == null || data.fileYear === '') {
-            return 'all';
-          }
-          const numeric = Number(data.fileYear);
-          return Number.isNaN(numeric) ? normalizeStatsFilterValue(data.fileYear) : numeric;
-        })();
+        const entries = buildSubjectStatsEntries(doc.data() || {}, 1);
 
-        const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
-        const filterValues = {
-          year: yearValue,
-          state: stateValue,
-          specialty: specialtyValue,
-          fileYear: fileYearValue,
-        };
-
-        for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
-          const combo = {
-            subject,
-            year: 'all',
-            state: 'all',
-            specialty: 'all',
-            fileYear: 'all',
+        entries.forEach((entry) => {
+          const statsRef = db.collection('subject_stats').doc(entry.docId);
+          const updatePayload = {
+            subject: entry.subject,
+            subjectDisplay: entry.subjectDisplay,
+            year: entry.year,
+            state: entry.state,
+            specialty: entry.specialty,
+            fileYear: entry.fileYear,
+            count: admin.firestore.FieldValue.increment(entry.delta),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           };
 
-          filterGroups.forEach((group, index) => {
-            if (mask & (1 << index)) {
-              combo[group] = filterValues[group] ?? 'all';
-            }
-          });
-
-          const docId = buildSubjectStatsDocId(combo);
-          const existing = statsMap.get(docId) || {
-            subject,
-            subjectDisplay,
-            year: combo.year,
-            state: combo.state,
-            specialty: combo.specialty,
-            fileYear: combo.fileYear,
-            count: 0,
-            specialties: new Set(),
-          };
-
-          existing.count += 1;
-          if (specialtyValue !== 'all') {
-            existing.specialties.add(specialtyValue);
+          if (entry.specialties.length > 0) {
+            updatePayload.specialties = admin.firestore.FieldValue.arrayUnion(...entry.specialties);
           }
-          statsMap.set(docId, existing);
-        }
+
+          firestoreBatch.set(statsRef, updatePayload, { merge: true });
+          writeCount += 1;
+        });
 
         processedFiles += 1;
       });
+
+      if (writeCount >= writeBatchSize) {
+        await firestoreBatch.commit();
+        firestoreBatch = db.batch();
+        writeCount = 0;
+      }
 
       if (approvedFilesSnapshot.size < batchSize) {
         break;
@@ -152,184 +189,77 @@ function createSubjectStatsService({ admin, db, cache, uploadPrefix = 'exercices
       lastDocSnapshot = approvedFilesSnapshot.docs[approvedFilesSnapshot.docs.length - 1];
     }
 
-    let writeCount = 0;
-    let firestoreBatch = db.batch();
-    for (const [docId, value] of statsMap.entries()) {
-      const statsRef = db.collection('subject_stats').doc(docId);
-      firestoreBatch.set(
-        statsRef,
-        {
-          subject: value.subject,
-          subjectDisplay: value.subjectDisplay,
-          year: value.year,
-          state: value.state,
-          specialty: value.specialty,
-          fileYear: value.fileYear,
-          count: value.count,
-          specialties: Array.from(value.specialties).sort(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-      writeCount += 1;
-
-      if (writeCount % 400 === 0) {
-        await firestoreBatch.commit();
-        firestoreBatch = db.batch();
-      }
+    if (writeCount > 0) {
+      await firestoreBatch.commit();
     }
 
-    if (writeCount % 400 !== 0) {
-      await firestoreBatch.commit();
+    if (typeof cache?.flushAll === 'function') {
+      cache.flushAll();
     }
 
     return {
       processedFiles,
-      statsDocs: statsMap.size,
       pages: page,
     };
   }
 
   async function updateSubjectStats(fileRecord, delta = 1) {
     try {
-      const subject = fileRecord.subject || 'عام';
-      const yearValue = fileRecord.year || 'all';
-      const stateValue = fileRecord.state || 'all';
-      const specialtyValue = fileRecord.specialty || 'all';
-      const fileYearRaw = fileRecord.fileYear;
-      const fileYearValue = typeof fileYearRaw === 'number' || !Number.isNaN(Number(fileYearRaw))
-        ? Number(fileYearRaw)
-        : 'all';
-
-      const subjectNormalized = normalizeText(subject);
-      const yearNormalized = normalizeStatsFilterValue(yearValue);
-      const stateNormalized = normalizeStatsFilterValue(stateValue);
-      const specialtyNormalized = normalizeStatsFilterValue(specialtyValue);
-      const countDelta = Number.isNaN(Number(delta)) ? 1 : Number(delta);
-
-      const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
-      const filterValues = {
-        year: yearNormalized,
-        state: stateNormalized,
-        specialty: specialtyNormalized,
-        fileYear: fileYearValue,
-      };
-
+      const entries = buildSubjectStatsEntries(fileRecord, delta);
       const batch = db.batch();
-      const seenDocIds = new Set();
 
-      for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
-        const combo = {
-          subject: subjectNormalized,
-          year: 'all',
-          state: 'all',
-          specialty: 'all',
-          fileYear: 'all',
-        };
-
-        filterGroups.forEach((group, index) => {
-          if (mask & (1 << index)) {
-            combo[group] = filterValues[group] ?? 'all';
-          }
-        });
-
-        const docId = buildSubjectStatsDocId(combo);
-        if (seenDocIds.has(docId)) {
-          continue;
-        }
-        seenDocIds.add(docId);
-
-        const statsRef = db.collection('subject_stats').doc(docId);
+      entries.forEach((entry) => {
+        const statsRef = db.collection('subject_stats').doc(entry.docId);
         const updatePayload = {
-          subject: subjectNormalized,
-          subjectDisplay: subject,
-          year: combo.year,
-          state: combo.state,
-          specialty: combo.specialty,
-          fileYear: combo.fileYear,
-          count: admin.firestore.FieldValue.increment(countDelta),
+          subject: entry.subject,
+          subjectDisplay: entry.subjectDisplay,
+          year: entry.year,
+          state: entry.state,
+          specialty: entry.specialty,
+          fileYear: entry.fileYear,
+          count: admin.firestore.FieldValue.increment(entry.delta),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
 
-        if (specialtyNormalized !== 'all' && countDelta > 0) {
-          updatePayload.specialties = admin.firestore.FieldValue.arrayUnion(specialtyNormalized);
+        if (entry.specialties.length > 0) {
+          updatePayload.specialties = admin.firestore.FieldValue.arrayUnion(...entry.specialties);
         }
 
         batch.set(statsRef, updatePayload, { merge: true });
-      }
+      });
 
       await batch.commit();
-      cache.flushAll();
-      console.log(`✅ Updated subject_stats for ${seenDocIds.size} combinations for subject=${subject} delta=${countDelta}`);
+      if (typeof cache?.flushAll === 'function') {
+        cache.flushAll();
+      }
+      console.log(`✅ Updated subject_stats for ${entries.length} combinations for subject=${fileRecord.subject || 'عام'} delta=${delta}`);
     } catch (statsError) {
       console.error('⚠️ Failed to update subject_stats:', statsError.message || statsError);
     }
   }
 
   async function updateSubjectStatsTransaction(fileRecord, delta, transaction) {
-    const subject = fileRecord.subject || 'عام';
-    const yearValue = fileRecord.year || 'all';
-    const stateValue = fileRecord.state || 'all';
-    const specialtyValue = fileRecord.specialty || 'all';
-    const fileYearRaw = fileRecord.fileYear;
-    const fileYearValue = typeof fileYearRaw === 'number' || !Number.isNaN(Number(fileYearRaw))
-      ? Number(fileYearRaw)
-      : 'all';
+    const entries = buildSubjectStatsEntries(fileRecord, delta);
 
-    const subjectNormalized = normalizeText(subject);
-    const yearNormalized = normalizeStatsFilterValue(yearValue);
-    const stateNormalized = normalizeStatsFilterValue(stateValue);
-    const specialtyNormalized = normalizeStatsFilterValue(specialtyValue);
-    const countDelta = Number.isNaN(Number(delta)) ? 1 : Number(delta);
-
-    const filterGroups = ['year', 'state', 'specialty', 'fileYear'];
-    const filterValues = {
-      year: yearNormalized,
-      state: stateNormalized,
-      specialty: specialtyNormalized,
-      fileYear: fileYearValue,
-    };
-
-    const seenDocIds = new Set();
-    for (let mask = 0; mask < (1 << filterGroups.length); mask += 1) {
-      const combo = {
-        subject: subjectNormalized,
-        year: 'all',
-        state: 'all',
-        specialty: 'all',
-        fileYear: 'all',
-      };
-
-      filterGroups.forEach((group, index) => {
-        if (mask & (1 << index)) {
-          combo[group] = filterValues[group] ?? 'all';
-        }
-      });
-
-      const docId = buildSubjectStatsDocId(combo);
-      if (seenDocIds.has(docId)) {
-        continue;
-      }
-      seenDocIds.add(docId);
-
-      const statsRef = db.collection('subject_stats').doc(docId);
+    entries.forEach((entry) => {
+      const statsRef = db.collection('subject_stats').doc(entry.docId);
       const updatePayload = {
-        subject: subjectNormalized,
-        subjectDisplay: subject,
-        year: combo.year,
-        state: combo.state,
-        specialty: combo.specialty,
-        fileYear: combo.fileYear,
-        count: admin.firestore.FieldValue.increment(countDelta),
+        subject: entry.subject,
+        subjectDisplay: entry.subjectDisplay,
+        year: entry.year,
+        state: entry.state,
+        specialty: entry.specialty,
+        fileYear: entry.fileYear,
+        count: admin.firestore.FieldValue.increment(entry.delta),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
-      if (specialtyNormalized !== 'all' && countDelta > 0) {
-        updatePayload.specialties = admin.firestore.FieldValue.arrayUnion(specialtyNormalized);
+      if (entry.specialties.length > 0) {
+        updatePayload.specialties = admin.firestore.FieldValue.arrayUnion(...entry.specialties);
       }
 
       transaction.set(statsRef, updatePayload, { merge: true });
-    }
+    });
   }
 
   function sanitizeSegment(value) {
@@ -375,4 +305,5 @@ module.exports = {
   normalizeStateValue,
   matchesFileFilters,
   buildSubjectStatsDocId,
+  buildSubjectStatsEntries,
 };
