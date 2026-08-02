@@ -122,6 +122,8 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
         });
       }
 
+      const requestedType = (req.body.type || 'exercise').toString().trim().toLowerCase();
+      const safeType = ['exercise', 'exam'].includes(requestedType) ? requestedType : 'exercise';
       const title = (req.body.title || path.parse(req.file.originalname).name).toString().trim();
       const uploadedByUid = (req.body.uploadedByUid || 'anonymous').toString();
       const requestedObjectKey = (req.body.objectKey || '').toString().trim();
@@ -221,6 +223,7 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
           fileHash,
           textFingerprint,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          type: safeType,
           optionalFields,
         });
 

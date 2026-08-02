@@ -18,12 +18,15 @@ function buildExerciseFileDocument({
   fileHash,
   textFingerprint,
   createdAt,
+  type,
   optionalFields = {},
 }) {
+  const normalizedType = (type || 'exercise').toString().trim().toLowerCase();
   const newFileDoc = {
     subject: subject.trim(),
     subjectNormalized: normalizeText(subject),
     title: title.trim(),
+    type: normalizedType,
     name,
     url,
     storagePath,

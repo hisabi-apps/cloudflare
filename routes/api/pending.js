@@ -7,9 +7,11 @@ module.exports = function createPendingRouter({ db, cache }) {
     try {
       const pageNum = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
       const limitNum = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
-      const cacheKey = `pending_page_${pageNum}_${limitNum}`;
-      const cursorCacheKey = `pending_cursor_page_${pageNum}_${limitNum}`;
-      const prevCursorCacheKey = pageNum > 1 ? `pending_cursor_page_${pageNum - 1}_${limitNum}` : null;
+      const requestedType = (req.query.type || '').toString().trim().toLowerCase();
+      const normalizedType = ['exercise', 'exam'].includes(requestedType) ? requestedType : null;
+      const cacheKey = `pending_page_${pageNum}_${limitNum}_${normalizedType || 'all'}`;
+      const cursorCacheKey = `pending_cursor_page_${pageNum}_${limitNum}_${normalizedType || 'all'}`;
+      const prevCursorCacheKey = pageNum > 1 ? `pending_cursor_page_${pageNum - 1}_${limitNum}_${normalizedType || 'all'}` : null;
       const cached = cache.get(cacheKey);
       if (cached) {
         return res.json(cached);
@@ -19,6 +21,14 @@ module.exports = function createPendingRouter({ db, cache }) {
         .where('reviewStatus', '==', 'pending')
         .orderBy('createdAt', 'desc')
         .orderBy('__name__');
+
+      if (normalizedType) {
+        query = db.collection('files')
+          .where('reviewStatus', '==', 'pending')
+          .where('type', '==', normalizedType)
+          .orderBy('createdAt', 'desc')
+          .orderBy('__name__');
+      }
 
       if (pageNum > 1 && prevCursorCacheKey) {
         const previousPageCursor = cache.get(prevCursorCacheKey);
