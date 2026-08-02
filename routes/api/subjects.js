@@ -45,87 +45,98 @@ module.exports = function createSubjectsRouter({ db, cache }) {
 
       const buildSubjectItemsFromFiles = async () => {
         console.log('🧠 /api/subjects falling back to files aggregation');
-        const fallbackSnapshot = await db.collection('files')
-          .where('isApproved', '==', true)
-          .get();
-        const subjectMap = new Map();
+        try {
+          const fallbackSnapshot = await db.collection('files')
+            .where('isApproved', '==', true)
+            .get();
+          const subjectMap = new Map();
 
-        fallbackSnapshot.forEach((doc) => {
-          const data = doc.data() || {};
-          const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
-          const subjectName = (data.subject || 'عام').toString().trim();
-          if (!subjectName) return;
+          fallbackSnapshot.forEach((doc) => {
+            const data = doc.data() || {};
+            const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
+            const subjectName = (data.subject || 'عام').toString().trim();
+            if (!subjectName) return;
 
-          const isRequestedType = normalizedType === 'exam'
-            ? docType === 'exam'
-            : (docType === 'exercise' || docType === '');
+            const isRequestedType = normalizedType === 'exam'
+              ? docType === 'exam'
+              : (docType === 'exercise' || docType === '');
 
-          if (!isRequestedType) {
-            return;
-          }
+            if (!isRequestedType) {
+              return;
+            }
 
-          if (!matchesFileFilters(data, {
-            yearFilter,
-            stateFilter,
-            specialtyFilter,
-            fileYearFilter,
-            fileYearFromFilter,
-            fileYearToFilter,
-          })) {
-            return;
-          }
+            if (!matchesFileFilters(data, {
+              yearFilter,
+              stateFilter,
+              specialtyFilter,
+              fileYearFilter,
+              fileYearFromFilter,
+              fileYearToFilter,
+            })) {
+              return;
+            }
 
-          const specialtyValue = normalizeText((data.specialty || '').toString());
-          const key = subjectName;
-          if (!subjectMap.has(key)) {
-            subjectMap.set(key, { count: 0, specialties: new Set(), files: [] });
-          }
-          const entry = subjectMap.get(key);
-          entry.count += 1;
-          if (specialtyValue) {
-            entry.specialties.add(specialtyValue);
-          }
-          entry.files.push({ id: doc.id, ...data });
-        });
+            const specialtyValue = normalizeText((data.specialty || '').toString());
+            const key = subjectName;
+            if (!subjectMap.has(key)) {
+              subjectMap.set(key, { count: 0, specialties: new Set(), files: [] });
+            }
+            const entry = subjectMap.get(key);
+            entry.count += 1;
+            if (specialtyValue) {
+              entry.specialties.add(specialtyValue);
+            }
+            entry.files.push({ id: doc.id, ...data });
+          });
 
-        return Array.from(subjectMap.entries()).map(([subjectName, info]) => ({
-          subject: subjectName,
-          count: info.count,
-          specialties: Array.from(info.specialties).sort(),
-          files: info.files.slice(0, 50),
-        }));
+          return Array.from(subjectMap.entries()).map(([subjectName, info]) => ({
+            subject: subjectName,
+            count: info.count,
+            specialties: Array.from(info.specialties).sort(),
+            files: info.files.slice(0, 50),
+          }));
+        } catch (fallbackError) {
+          console.warn('⚠️ Files-based subject fallback failed:', fallbackError?.message || fallbackError);
+          return [];
+        }
       };
 
       if (hasActiveFilters) {
         items = await buildSubjectItemsFromFiles();
       } else {
-        let query = db.collection('subject_stats');
-        if (yearFilter) query = query.where('year', '==', yearFilter);
-        if (stateFilter) query = query.where('state', '==', stateFilter);
-        if (specialtyFilter) query = query.where('specialty', '==', specialtyFilter);
-        if (fileYearFilter != null) query = query.where('fileYear', '==', fileYearFilter);
-        if (fileYearFromFilter != null) query = query.where('fileYear', '>=', fileYearFromFilter);
-        if (fileYearToFilter != null) query = query.where('fileYear', '<=', fileYearToFilter);
+        let subjectStatsItems = [];
+        try {
+          let query = db.collection('subject_stats');
+          if (yearFilter) query = query.where('year', '==', yearFilter);
+          if (stateFilter) query = query.where('state', '==', stateFilter);
+          if (specialtyFilter) query = query.where('specialty', '==', specialtyFilter);
+          if (fileYearFilter != null) query = query.where('fileYear', '==', fileYearFilter);
+          if (fileYearFromFilter != null) query = query.where('fileYear', '>=', fileYearFromFilter);
+          if (fileYearToFilter != null) query = query.where('fileYear', '<=', fileYearToFilter);
 
-        const snapshot = await query.get();
-        console.log(`📊 /api/subjects read ${snapshot.size} subject_stats docs for page=${pageNum} limit=${limitNum}`);
+          const snapshot = await query.get();
+          console.log(`📊 /api/subjects read ${snapshot.size} subject_stats docs for page=${pageNum} limit=${limitNum}`);
 
-        const subjectStatsItems = snapshot.empty
-          ? []
-          : snapshot.docs
-              .map((doc) => {
-                const data = doc.data() || {};
-                const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
-                if (normalizedType === 'exam' ? docType !== 'exam' : docType !== 'exercise' && docType !== '') {
-                  return null;
-                }
-                return {
-                  subject: data.subjectDisplay || data.subject || 'عام',
-                  count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
-                  specialties: Array.isArray(data.specialties) ? data.specialties : [],
-                };
-              })
-              .filter(Boolean);
+          subjectStatsItems = snapshot.empty
+            ? []
+            : snapshot.docs
+                .map((doc) => {
+                  const data = doc.data() || {};
+                  const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
+                  if (normalizedType === 'exam' ? docType !== 'exam' : docType !== 'exercise' && docType !== '') {
+                    return null;
+                  }
+                  return {
+                    subject: data.subjectDisplay || data.subject || 'عام',
+                    count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
+                    specialties: Array.isArray(data.specialties) ? data.specialties : [],
+                  };
+                })
+                .filter(Boolean);
+        } catch (statsError) {
+          console.warn('⚠️ subject_stats lookup failed, using files fallback instead:', statsError?.message || statsError);
+          subjectStatsItems = [];
+        }
 
         const fallbackItems = await buildSubjectItemsFromFiles();
         const dedupedItems = mergeSubjectItemsBySubject([...subjectStatsItems, ...fallbackItems]);
