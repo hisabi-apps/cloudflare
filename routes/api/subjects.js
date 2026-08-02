@@ -44,15 +44,23 @@ module.exports = function createSubjectsRouter({ db, cache }) {
       const buildSubjectItemsFromFiles = async () => {
         console.log('🧠 /api/subjects falling back to files aggregation');
         const fallbackSnapshot = await db.collection('files')
-          .where('type', '==', normalizedType)
           .where('isApproved', '==', true)
           .get();
         const subjectMap = new Map();
 
         fallbackSnapshot.forEach((doc) => {
           const data = doc.data() || {};
+          const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
           const subjectName = (data.subject || 'عام').toString().trim();
           if (!subjectName) return;
+
+          const isRequestedType = normalizedType === 'exam'
+            ? docType === 'exam'
+            : (docType === 'exercise' || docType === '');
+
+          if (!isRequestedType) {
+            return;
+          }
 
           if (!matchesFileFilters(data, {
             yearFilter,

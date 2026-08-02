@@ -11,7 +11,7 @@ module.exports = function createFilesRouter({ db, cache }) {
 
   router.get('/', async (req, res) => {
     try {
-      const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, page = 1, limit = 10 } = req.query;
+      const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, type, page = 1, limit = 10 } = req.query;
       if (!subject) {
         return res.status(400).json({ error: 'Subject is required.' });
       }
@@ -19,6 +19,10 @@ module.exports = function createFilesRouter({ db, cache }) {
       const pageNum = Math.max(parseInt(page, 10) || 1, 1);
       const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
       const offset = (pageNum - 1) * limitNum;
+
+      const normalizedType = ['exercise', 'exam'].includes((type || 'exercise').toString().trim().toLowerCase())
+        ? (type || 'exercise').toString().trim().toLowerCase()
+        : 'exercise';
 
       const fileYearFilter = fileYear != null && fileYear !== '' && !Number.isNaN(Number(fileYear))
         ? Number(fileYear)
@@ -59,6 +63,12 @@ module.exports = function createFilesRouter({ db, cache }) {
       const files = [];
       snapshot.forEach((doc) => {
         const data = doc.data() || {};
+        const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
+
+        if (normalizedType === 'exam' ? docType !== 'exam' : docType !== 'exercise' && docType !== '') {
+          return;
+        }
+
         if (!matchesFileFilters(data, {
           yearFilter,
           stateFilter,
