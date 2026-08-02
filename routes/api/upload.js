@@ -234,7 +234,7 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
           optionalFields,
         });
 
-        console.log(`[upload] file=${title} type=${safeType} subject=${subject} uploadedBy=${uploadedByUid} reviewStatus=${newFileDoc.reviewStatus} isApproved=${newFileDoc.isApproved} reason=${moderationReason}`);
+        console.log(`[upload] file=${title} type=${safeType} subject=${subject} uploadedBy=${uploadedByUid} reviewStatus=${newFileDoc.reviewStatus} isApproved=${newFileDoc.isApproved} reason=${moderationReason} storedType=${newFileDoc.type}`);
 
         docRef = await db.collection('files').add(newFileDoc);
 
@@ -282,6 +282,8 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
         url: publicUrl,
         objectKey,
         skippedFileRecord: skipFileRecord,
+        type: safeType,
+        reviewStatus: skipFileRecord ? null : (docRef ? 'pending' : null),
       });
     } catch (error) {
       console.error('Upload failed:', error);

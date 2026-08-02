@@ -25,7 +25,6 @@ module.exports = function createPendingRouter({ db, cache }) {
       if (normalizedType) {
         query = db.collection('files')
           .where('reviewStatus', '==', 'pending')
-          .where('type', '==', normalizedType)
           .orderBy('createdAt', 'desc')
           .orderBy('__name__');
       }
@@ -42,7 +41,17 @@ module.exports = function createPendingRouter({ db, cache }) {
       const snapshot = await query.limit(limitNum).get();
       console.log(`📌 /api/pending read ${snapshot.size} pending docs for page=${pageNum} limit=${limitNum}`);
 
-      const files = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const allFiles = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const files = normalizedType
+        ? allFiles.filter((file) => {
+            const fileType = (file?.type || '').toString().trim().toLowerCase();
+            if (!fileType) {
+              return true;
+            }
+            return fileType === normalizedType;
+          })
+        : allFiles;
+
       if (normalizedType) {
         console.log(`[pending] type=${normalizedType} returned=${files.length} files; sampleTypes=${files.slice(0, 5).map((file) => file.type || 'missing').join(', ')}`);
       } else {
@@ -80,6 +89,7 @@ module.exports = function createPendingRouter({ db, cache }) {
         page: pageNum,
         limit: limitNum,
         hasMore: snapshot.size === limitNum,
+        debugType: normalizedType || 'all',
       };
 
       cache.set(cacheKey, response);
