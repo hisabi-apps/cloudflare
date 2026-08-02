@@ -134,9 +134,18 @@ function matchesFileFilters(data, {
 }
 
 function resolveSubjectItemsForDisplay({ subjectStatsItems, fallbackItems }) {
-  if (Array.isArray(subjectStatsItems) && subjectStatsItems.length > 0) {
-    return subjectStatsItems;
+  const usableStatsItems = Array.isArray(subjectStatsItems)
+    ? subjectStatsItems.filter((item) => {
+        const countValue = Number(item?.count ?? 0);
+        const files = Array.isArray(item?.files) ? item.files : [];
+        return countValue > 0 || files.length > 0;
+      })
+    : [];
+
+  if (usableStatsItems.length > 0) {
+    return usableStatsItems;
   }
+
   return Array.isArray(fallbackItems) ? fallbackItems : [];
 }
 
