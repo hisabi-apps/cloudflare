@@ -4,6 +4,15 @@ const {
   normalizeStateValue,
 } = require('../utils/normalize');
 
+module.exports = {
+  buildSubjectStatsDocId,
+  buildSubjectStatsEntries,
+  matchesFileFilters,
+  mergeSubjectItemsBySubject,
+  resolveSubjectItemsForDisplay,
+  createSubjectStatsService,
+};
+
 function buildSubjectStatsDocId({ subject, type, year, state, specialty, fileYear }) {
   const normalized = {
     subject: normalizeText(subject || 'عام'),
@@ -133,6 +142,55 @@ function matchesFileFilters(data, {
   return matchesYear && matchesState && matchesSpecialty && matchesFileYearExact && matchesFileYearFrom && matchesFileYearTo;
 }
 
+function mergeSubjectItemsBySubject(items) {
+  const merged = [];
+  const lookup = new Map();
+
+  for (const item of Array.isArray(items) ? items : []) {
+    const subjectName = (item?.subject || '').toString().trim();
+    if (!subjectName) continue;
+
+    const key = subjectName.toLowerCase();
+    if (!lookup.has(key)) {
+      lookup.set(key, merged.length);
+      merged.push({
+        subject: subjectName,
+        count: 0,
+        specialties: [],
+        files: [],
+      });
+    }
+
+    const entry = merged[lookup.get(key)];
+    const countValue = Number(item?.count ?? 0);
+    if (countValue > Number(entry.count ?? 0)) {
+      entry.count = countValue;
+    }
+
+    const mergedSpecialties = new Set([...(entry.specialties || []), ...(item?.specialties || [])]);
+    entry.specialties = Array.from(mergedSpecialties).sort();
+
+    const itemFiles = Array.isArray(item?.files) ? item.files : [];
+    if (itemFiles.length > 0) {
+      const existingFiles = Array.isArray(entry.files) ? entry.files : [];
+      const seenFileIds = new Set(existingFiles.map((file) => (file?.id ?? '').toString()).filter(Boolean));
+      for (const file of itemFiles) {
+        const fileId = (file?.id ?? '').toString();
+        if (fileId && seenFileIds.has(fileId)) {
+          continue;
+        }
+        if (fileId) {
+          seenFileIds.add(fileId);
+        }
+        existingFiles.push(file);
+      }
+      entry.files = existingFiles;
+    }
+  }
+
+  return merged;
+}
+
 function resolveSubjectItemsForDisplay({ subjectStatsItems, fallbackItems }) {
   const usableStatsItems = Array.isArray(subjectStatsItems)
     ? subjectStatsItems.filter((item) => {
@@ -142,11 +200,12 @@ function resolveSubjectItemsForDisplay({ subjectStatsItems, fallbackItems }) {
       })
     : [];
 
+  const fallbackCandidates = Array.isArray(fallbackItems) ? fallbackItems : [];
   if (usableStatsItems.length > 0) {
-    return usableStatsItems;
+    return mergeSubjectItemsBySubject([...usableStatsItems, ...fallbackCandidates]);
   }
 
-  return Array.isArray(fallbackItems) ? fallbackItems : [];
+  return mergeSubjectItemsBySubject(fallbackCandidates);
 }
 
 function createSubjectStatsService({ admin, db, cache, uploadPrefix = 'exercices' }) {
@@ -333,5 +392,6 @@ module.exports = {
   matchesFileFilters,
   buildSubjectStatsDocId,
   buildSubjectStatsEntries,
+  mergeSubjectItemsBySubject,
   resolveSubjectItemsForDisplay,
 };

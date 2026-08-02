@@ -4,6 +4,7 @@ const {
   normalizeStatsFilterValue,
   normalizeStateValue,
   matchesFileFilters,
+  mergeSubjectItemsBySubject,
   resolveSubjectItemsForDisplay,
 } = require('../../services/statsService');
 
@@ -18,7 +19,7 @@ module.exports = function createSubjectsRouter({ db, cache }) {
       const normalizedType = ['exercise', 'exam'].includes((type || 'exercise').toString().trim().toLowerCase())
         ? (type || 'exercise').toString().trim().toLowerCase()
         : 'exercise';
-      const queryKeyBase = `subject_stats_${normalizedType}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
+      const queryKeyBase = `subject_stats_v2_${normalizedType}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || fileYearFrom || 'all'}_${fileYearTo || 'all'}`;
       const cacheKey = `${queryKeyBase}_${pageNum}_${limitNum}`;
 
       const cached = cache.get(cacheKey);
@@ -127,9 +128,11 @@ module.exports = function createSubjectsRouter({ db, cache }) {
               .filter(Boolean);
 
         const fallbackItems = await buildSubjectItemsFromFiles();
+        const dedupedItems = mergeSubjectItemsBySubject([...subjectStatsItems, ...fallbackItems]);
+
         items = resolveSubjectItemsForDisplay({
-          subjectStatsItems,
-          fallbackItems,
+          subjectStatsItems: dedupedItems,
+          fallbackItems: dedupedItems,
         });
       }
 
