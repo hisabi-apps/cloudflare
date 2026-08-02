@@ -189,17 +189,24 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
         }
 
         let isAdmin = false;
+        let moderationReason = 'user_is_not_admin';
         if (uploadedByUid !== 'anonymous') {
           const userDoc = await db.collection('users').doc(uploadedByUid).get();
           if (userDoc.exists) {
             const userData = userDoc.data() || {};
+            const role = (userData.role || '').toString().trim().toLowerCase();
             const canModerate =
               userData.canModerateExercises === true ||
-              ['admin', 'moderator', 'owner'].includes(
-                (userData.role || '').toString().trim().toLowerCase(),
-              );
+              ['admin', 'moderator', 'owner'].includes(role);
             isAdmin = canModerate === true;
+            moderationReason = isAdmin
+              ? `user_has_role_${role || 'unknown'}`
+              : `user_has_role_${role || 'unknown'}_but_not_moderator`;
+          } else {
+            moderationReason = 'user_not_found_in_firestore';
           }
+        } else {
+          moderationReason = 'anonymous_upload';
         }
 
         const optionalFields = {
@@ -226,6 +233,8 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
           type: safeType,
           optionalFields,
         });
+
+        console.log(`[upload] file=${title} type=${safeType} subject=${subject} uploadedBy=${uploadedByUid} reviewStatus=${newFileDoc.reviewStatus} isApproved=${newFileDoc.isApproved} reason=${moderationReason}`);
 
         docRef = await db.collection('files').add(newFileDoc);
 
