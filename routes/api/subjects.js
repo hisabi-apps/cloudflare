@@ -4,6 +4,7 @@ const {
   normalizeStatsFilterValue,
   normalizeStateValue,
   matchesFileFilters,
+  resolveSubjectItemsForDisplay,
 } = require('../../services/statsService');
 
 module.exports = function createSubjectsRouter({ db, cache }) {
@@ -108,24 +109,28 @@ module.exports = function createSubjectsRouter({ db, cache }) {
         const snapshot = await query.get();
         console.log(`📊 /api/subjects read ${snapshot.size} subject_stats docs for page=${pageNum} limit=${limitNum}`);
 
-        if (snapshot.empty) {
-          items = await buildSubjectItemsFromFiles();
-        } else {
-          items = snapshot.docs
-            .map((doc) => {
-              const data = doc.data() || {};
-              const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
-              if (normalizedType === 'exam' ? docType !== 'exam' : docType !== 'exercise' && docType !== '') {
-                return null;
-              }
-              return {
-                subject: data.subjectDisplay || data.subject || 'عام',
-                count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
-                specialties: Array.isArray(data.specialties) ? data.specialties : [],
-              };
-            })
-            .filter(Boolean);
-        }
+        const subjectStatsItems = snapshot.empty
+          ? []
+          : snapshot.docs
+              .map((doc) => {
+                const data = doc.data() || {};
+                const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
+                if (normalizedType === 'exam' ? docType !== 'exam' : docType !== 'exercise' && docType !== '') {
+                  return null;
+                }
+                return {
+                  subject: data.subjectDisplay || data.subject || 'عام',
+                  count: typeof data.count === 'number' ? data.count : Number(data.count) || 0,
+                  specialties: Array.isArray(data.specialties) ? data.specialties : [],
+                };
+              })
+              .filter(Boolean);
+
+        const fallbackItems = await buildSubjectItemsFromFiles();
+        items = resolveSubjectItemsForDisplay({
+          subjectStatsItems,
+          fallbackItems,
+        });
       }
 
       const offset = (pageNum - 1) * limitNum;

@@ -133,6 +133,13 @@ function matchesFileFilters(data, {
   return matchesYear && matchesState && matchesSpecialty && matchesFileYearExact && matchesFileYearFrom && matchesFileYearTo;
 }
 
+function resolveSubjectItemsForDisplay({ subjectStatsItems, fallbackItems }) {
+  if (Array.isArray(subjectStatsItems) && subjectStatsItems.length > 0) {
+    return subjectStatsItems;
+  }
+  return Array.isArray(fallbackItems) ? fallbackItems : [];
+}
+
 function createSubjectStatsService({ admin, db, cache, uploadPrefix = 'exercices' }) {
   async function rebuildSubjectStatsFromApprovedFiles({ batchSize = 500, writeBatchSize = 400 } = {}) {
     let processedFiles = 0;
@@ -317,4 +324,5 @@ module.exports = {
   matchesFileFilters,
   buildSubjectStatsDocId,
   buildSubjectStatsEntries,
+  resolveSubjectItemsForDisplay,
 };
