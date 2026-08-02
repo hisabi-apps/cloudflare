@@ -1,37 +1,9 @@
 const express = require('express');
-
-function normalizeDeviceTokens(userData) {
-  const tokens = [];
-  if (Array.isArray(userData?.deviceTokens)) {
-    userData.deviceTokens
-      .filter((token) => typeof token === 'string' && token.trim() !== '')
-      .forEach((token) => tokens.push(token.trim()));
-  }
-
-  const fallbackTokenFields = ['fcmToken', 'messagingToken', 'token'];
-  fallbackTokenFields.forEach((fieldName) => {
-    const value = userData?.[fieldName];
-    if (typeof value === 'string' && value.trim() !== '') {
-      tokens.push(value.trim());
-    }
-  });
-
-  return [...new Set(tokens)];
-}
+const { createDeviceTokenService } = require('../../utils/validators');
 
 module.exports = function createNotificationsRouter({ admin, db }) {
   const router = express.Router();
-
-  async function removeInvalidDeviceToken(userId, token) {
-    try {
-      await db.collection('users').doc(userId).update({
-        deviceTokens: admin.firestore.FieldValue.arrayRemove(token),
-      });
-      console.log(`🗑️ Removed invalid device token from user ${userId}`);
-    } catch (e) {
-      console.error(`⚠️ Failed to remove invalid token for user ${userId}:`, e?.message || e);
-    }
-  }
+  const { normalizeDeviceTokens, removeInvalidDeviceToken } = createDeviceTokenService({ admin, db });
 
   router.post('/mark-opened', async (req, res) => {
     try {

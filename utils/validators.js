@@ -32,7 +32,26 @@ function normalizeDeviceTokens(userData) {
   return [...new Set(tokens)];
 }
 
+function createDeviceTokenService({ admin, db }) {
+  async function removeInvalidDeviceToken(userId, token) {
+    try {
+      await db.collection('users').doc(userId).update({
+        deviceTokens: admin.firestore.FieldValue.arrayRemove(token),
+      });
+      console.log(`🗑️ Removed invalid device token from user ${userId}`);
+    } catch (e) {
+      console.error(`⚠️ Failed to remove invalid token for user ${userId}:`, e?.message || e);
+    }
+  }
+
+  return {
+    normalizeDeviceTokens,
+    removeInvalidDeviceToken,
+  };
+}
+
 module.exports = {
   parseBooleanLike,
   normalizeDeviceTokens,
+  createDeviceTokenService,
 };

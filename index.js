@@ -10,6 +10,7 @@ const { createSubjectStatsService } = require('./services/statsService');
 const { createFileService } = require('./services/fileService');
 const { createR2Client } = require('./config/r2');
 const { createCache } = require('./config/cache');
+const { createDeviceTokenService } = require('./utils/validators');
 const createNotificationsRouter = require('./routes/api/notifications');
 const createSubjectsRouter = require('./routes/api/subjects');
 const createFilesRouter = require('./routes/api/files');
@@ -81,46 +82,8 @@ const app = express();
 app.use(express.json());
 
 const cache = createCache();
-
-function normalizeDeviceTokens(userData) {
-  const tokens = [];
-  
-  // Debug: what fields exist
-  const availableFields = Object.keys(userData || {});
-  console.log(`ðŸ” Available fields in userData: ${availableFields.join(', ')}`);
-  
-  if (Array.isArray(userData?.deviceTokens)) {
-    console.log(`âœ… Found deviceTokens array with ${userData.deviceTokens.length} items`);
-    userData.deviceTokens
-      .filter((token) => typeof token === 'string' && token.trim() !== '')
-      .forEach((token) => tokens.push(token.trim()));
-  } else {
-    console.log(`âŒ deviceTokens is not an array. Type: ${typeof userData?.deviceTokens}, Value: ${userData?.deviceTokens}`);
-  }
-
-  const fallbackTokenFields = ['fcmToken', 'messagingToken', 'token'];
-  fallbackTokenFields.forEach((fieldName) => {
-    const value = userData?.[fieldName];
-    if (typeof value === 'string' && value.trim() !== '') {
-      console.log(`âœ… Found fallback token in field "${fieldName}": ${value.substring(0, 20)}...`);
-      tokens.push(value.trim());
-    }
-  });
-
-  console.log(`ðŸ“Š Total tokens extracted: ${tokens.length}`);
-  return [...new Set(tokens)];
-}
-
-async function removeInvalidDeviceToken(userId, token) {
-  try {
-    await db.collection('users').doc(userId).update({
-      deviceTokens: admin.firestore.FieldValue.arrayRemove(token),
-    });
-    console.log(`ðŸ—‘ï¸ Removed invalid device token from user ${userId}`);
-  } catch (e) {
-    console.error(`âš ï¸ Failed to remove invalid token for user ${userId}:`, e?.message || e);
-  }
-}
+const deviceTokenService = createDeviceTokenService({ admin, db });
+const { normalizeDeviceTokens, removeInvalidDeviceToken } = deviceTokenService;
 
 const notificationService = createNotificationService({ admin, db });
 const { resolveNotificationMetadata, getLocalizedField, persistAdminNotificationToUsers } = notificationService;
