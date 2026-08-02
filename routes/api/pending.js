@@ -43,6 +43,11 @@ module.exports = function createPendingRouter({ db, cache }) {
       console.log(`📌 /api/pending read ${snapshot.size} pending docs for page=${pageNum} limit=${limitNum}`);
 
       const files = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      if (normalizedType) {
+        console.log(`[pending] type=${normalizedType} returned=${files.length} files; sampleTypes=${files.slice(0, 5).map((file) => file.type || 'missing').join(', ')}`);
+      } else {
+        console.log(`[pending] all-types returned=${files.length} files; sampleTypes=${files.slice(0, 5).map((file) => file.type || 'missing').join(', ')}`);
+      }
       if (snapshot.docs.length > 0) {
         cache.set(cursorCacheKey, snapshot.docs[snapshot.docs.length - 1]);
       }
