@@ -3,6 +3,7 @@ const path = require('path');
 const multer = require('multer');
 const { PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { shouldBlockDuplicateUpload } = require('../../duplicate_policy');
+const { parseBooleanLike } = require('../../utils/validators');
 const { computeTextFingerprint, isTextLikeFile } = require('../../content_fingerprint');
 const { buildExerciseFileDocument } = require('../../file_doc_builder');
 const { findDuplicateBySignatureStore } = require('../../duplicate_signature_store');
@@ -137,6 +138,9 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
       const objectKey = requestedObjectKey
         ? requestedObjectKey.replace(/^\/+/, '')
         : buildObjectKey(subject, title, req.file.originalname);
+      console.log('[upload] withCorrection raw:', req.body.withCorrection, typeof req.body.withCorrection);
+      const withCorrection = parseBooleanLike(req.body.withCorrection) === true;
+      console.log('[upload] withCorrection parsed:', withCorrection);
       const textFingerprint = isTextLikeFile(req.file.originalname, req.file.mimetype)
         ? computeTextFingerprint(fileBuffer.toString('utf8'))
         : '';
@@ -227,6 +231,7 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
           uploadedByEmail: req.body.uploadedByEmail || '',
           isApproved: isAdmin,
           reviewStatus: isAdmin ? 'approved' : 'pending',
+          withCorrection,
           fileHash,
           textFingerprint,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
