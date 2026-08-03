@@ -27,6 +27,13 @@ module.exports = function createSubjectsRouter({ db, cache }) {
         return res.json(cached);
       }
 
+      const quotaFallbackResponse = {
+        items: [],
+        page: pageNum,
+        limit: limitNum,
+        hasMore: false,
+      };
+
       const yearFilter = year ? normalizeStatsFilterValue(year) : null;
       const stateFilter = state ? normalizeStateValue(state) : null;
       const specialtyFilter = specialty ? normalizeStatsFilterValue(specialty) : null;
@@ -50,6 +57,9 @@ module.exports = function createSubjectsRouter({ db, cache }) {
       const buildSubjectItemsFromFiles = async () => {
         console.log('🧠 /api/subjects falling back to files aggregation');
         try {
+          if (cache.get(`quota_block_${queryKeyBase}`)) {
+            return [];
+          }
           const subjectMap = new Map();
           let lastDoc = null;
           let iterations = 0;
@@ -124,7 +134,12 @@ module.exports = function createSubjectsRouter({ db, cache }) {
             files: info.files.slice(0, 20),
           }));
         } catch (fallbackError) {
-          console.warn('⚠️ Files-based subject fallback failed:', fallbackError?.message || fallbackError);
+          if (isQuotaExhaustedError(fallbackError)) {
+            cache.set(`quota_block_${queryKeyBase}`, true, 60);
+            console.warn('⚠️ Files-based subject fallback quota exceeded; blocking further Firestore fallback for 60s.');
+          } else {
+            console.warn('⚠️ Files-based subject fallback failed:', fallbackError?.message || fallbackError);
+          }
           return [];
         }
       };
@@ -163,12 +178,18 @@ module.exports = function createSubjectsRouter({ db, cache }) {
                 .filter(Boolean);
         } catch (statsError) {
           if (isQuotaExhaustedError(statsError)) {
+            cache.set(`quota_block_${queryKeyBase}`, true, 60);
             console.warn('⚠️ subject_stats quota exceeded, skipping Firestore stats and using lightweight fallback.');
             subjectStatsItems = [];
           } else {
             console.warn('⚠️ subject_stats lookup failed, using files fallback instead:', statsError?.message || statsError);
             subjectStatsItems = [];
           }
+        }
+
+        if (cache.get(`quota_block_${queryKeyBase}`)) {
+          cache.set(cacheKey, quotaFallbackResponse);
+          return res.json(quotaFallbackResponse);
         }
 
         const fallbackItems = await buildSubjectItemsFromFiles();
