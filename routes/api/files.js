@@ -170,23 +170,10 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
           throw new Error('FILE_NOT_FOUND');
         }
 
-        const data = snapshot.data() || {};
-        const existingComments = Array.isArray(data.comments) ? data.comments : [];
-        const newComment = {
-          id: `${Date.now()}-${currentUid.slice(0, 8)}`,
-          text: commentText,
-          userId: currentUid,
-          userName: decodedToken.name || decodedToken.email || 'مستخدم',
-          createdAt: new Date().toISOString(),
-        };
-
-        const comments = [...existingComments, newComment];
-
         transaction.update(docRef, {
           comment: commentText,
           commentBy: currentUid,
-          commentAt: new Date().toISOString(),
-          comments,
+          commentAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
         return {
@@ -194,7 +181,6 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
           id,
           comment: commentText,
           commentBy: currentUid,
-          comments,
         };
       });
 
