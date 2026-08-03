@@ -48,6 +48,7 @@ module.exports = function createSubjectsRouter({ db, cache }) {
         try {
           const fallbackSnapshot = await db.collection('files')
             .where('isApproved', '==', true)
+            .limit(500)
             .get();
           const subjectMap = new Map();
 
@@ -145,6 +146,14 @@ module.exports = function createSubjectsRouter({ db, cache }) {
           subjectStatsItems: dedupedItems,
           fallbackItems: dedupedItems,
         });
+
+        if (!items.length) {
+          const explicitFallbackItems = await buildSubjectItemsFromFiles();
+          items = resolveSubjectItemsForDisplay({
+            subjectStatsItems: explicitFallbackItems,
+            fallbackItems: explicitFallbackItems,
+          });
+        }
       }
 
       const visibleItems = Array.isArray(items)
