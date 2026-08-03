@@ -55,7 +55,6 @@ module.exports = function createSubjectsRouter({ db, cache }) {
       let items = [];
 
       const buildSubjectItemsFromFiles = async () => {
-        console.log('🧠 /api/subjects falling back to files aggregation');
         try {
           if (cache.get(`quota_block_${queryKeyBase}`)) {
             return [];
@@ -136,7 +135,6 @@ module.exports = function createSubjectsRouter({ db, cache }) {
         } catch (fallbackError) {
           if (isQuotaExhaustedError(fallbackError)) {
             cache.set(`quota_block_${queryKeyBase}`, true, 60);
-            console.warn('⚠️ Files-based subject fallback quota exceeded; blocking further Firestore fallback for 60s.');
           } else {
             console.warn('⚠️ Files-based subject fallback failed:', fallbackError?.message || fallbackError);
           }
@@ -179,7 +177,6 @@ module.exports = function createSubjectsRouter({ db, cache }) {
         } catch (statsError) {
           if (isQuotaExhaustedError(statsError)) {
             cache.set(`quota_block_${queryKeyBase}`, true, 60);
-            console.warn('⚠️ subject_stats quota exceeded, skipping Firestore stats and using lightweight fallback.');
             subjectStatsItems = [];
           } else {
             console.warn('⚠️ subject_stats lookup failed, using files fallback instead:', statsError?.message || statsError);
