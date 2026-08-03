@@ -138,9 +138,7 @@ module.exports = function createUploadRouter({ db, admin, s3Client, R2_BUCKET_NA
       const objectKey = requestedObjectKey
         ? requestedObjectKey.replace(/^\/+/, '')
         : buildObjectKey(subject, title, req.file.originalname);
-      console.log('[upload] withCorrection raw:', req.body.withCorrection, typeof req.body.withCorrection);
       const withCorrection = parseBooleanLike(req.body.withCorrection) === true;
-      console.log('[upload] withCorrection parsed:', withCorrection);
       const textFingerprint = isTextLikeFile(req.file.originalname, req.file.mimetype)
         ? computeTextFingerprint(fileBuffer.toString('utf8'))
         : '';
