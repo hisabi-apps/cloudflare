@@ -30,6 +30,10 @@ module.exports = function createSubjectsRouter({ db, cache }) {
       const yearFilter = year ? normalizeStatsFilterValue(year) : null;
       const stateFilter = state ? normalizeStateValue(state) : null;
       const specialtyFilter = specialty ? normalizeStatsFilterValue(specialty) : null;
+      const isQuotaExhaustedError = (error) => {
+        const message = String(error?.message || error || '').toLowerCase();
+        return message.includes('resource_exhausted') || message.includes('quota exceeded') || message.includes('quota');
+      };
       const fileYearFilter = fileYear != null && fileYear !== '' && !Number.isNaN(Number(fileYear))
         ? Number(fileYear)
         : null;
@@ -46,54 +50,78 @@ module.exports = function createSubjectsRouter({ db, cache }) {
       const buildSubjectItemsFromFiles = async () => {
         console.log('🧠 /api/subjects falling back to files aggregation');
         try {
-          const fallbackSnapshot = await db.collection('files')
-            .where('isApproved', '==', true)
-            .get();
           const subjectMap = new Map();
+          let lastDoc = null;
+          let iterations = 0;
+          const maxIterations = 4;
 
-          fallbackSnapshot.forEach((doc) => {
-            const data = doc.data() || {};
-            const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
-            const subjectName = (data.subject || 'عام').toString().trim();
-            if (!subjectName) return;
+          while (iterations < maxIterations) {
+            iterations += 1;
+            let query = db.collection('files')
+              .where('isApproved', '==', true)
+              .orderBy('__name__')
+              .limit(80);
 
-            const isRequestedType = normalizedType === 'exam'
-              ? docType === 'exam'
-              : (docType === 'exercise' || docType === '');
-
-            if (!isRequestedType) {
-              return;
+            if (lastDoc) {
+              query = query.startAfter(lastDoc);
             }
 
-            if (!matchesFileFilters(data, {
-              yearFilter,
-              stateFilter,
-              specialtyFilter,
-              fileYearFilter,
-              fileYearFromFilter,
-              fileYearToFilter,
-            })) {
-              return;
+            const fallbackSnapshot = await query.get();
+            if (fallbackSnapshot.empty) {
+              break;
             }
 
-            const specialtyValue = normalizeText((data.specialty || '').toString());
-            const key = subjectName;
-            if (!subjectMap.has(key)) {
-              subjectMap.set(key, { count: 0, specialties: new Set(), files: [] });
+            fallbackSnapshot.forEach((doc) => {
+              const data = doc.data() || {};
+              const docType = ((data.type || 'exercise').toString().trim().toLowerCase());
+              const subjectName = (data.subject || 'عام').toString().trim();
+              if (!subjectName) return;
+
+              const isRequestedType = normalizedType === 'exam'
+                ? docType === 'exam'
+                : (docType === 'exercise' || docType === '');
+
+              if (!isRequestedType) {
+                return;
+              }
+
+              if (!matchesFileFilters(data, {
+                yearFilter,
+                stateFilter,
+                specialtyFilter,
+                fileYearFilter,
+                fileYearFromFilter,
+                fileYearToFilter,
+              })) {
+                return;
+              }
+
+              const specialtyValue = normalizeText((data.specialty || '').toString());
+              const key = subjectName;
+              if (!subjectMap.has(key)) {
+                subjectMap.set(key, { count: 0, specialties: new Set(), files: [] });
+              }
+              const entry = subjectMap.get(key);
+              entry.count += 1;
+              if (specialtyValue) {
+                entry.specialties.add(specialtyValue);
+              }
+              if (entry.files.length < 20) {
+                entry.files.push({ id: doc.id, ...data });
+              }
+            });
+
+            if (fallbackSnapshot.size < 80) {
+              break;
             }
-            const entry = subjectMap.get(key);
-            entry.count += 1;
-            if (specialtyValue) {
-              entry.specialties.add(specialtyValue);
-            }
-            entry.files.push({ id: doc.id, ...data });
-          });
+            lastDoc = fallbackSnapshot.docs[fallbackSnapshot.docs.length - 1];
+          }
 
           return Array.from(subjectMap.entries()).map(([subjectName, info]) => ({
             subject: subjectName,
             count: info.count,
             specialties: Array.from(info.specialties).sort(),
-            files: info.files.slice(0, 50),
+            files: info.files.slice(0, 20),
           }));
         } catch (fallbackError) {
           console.warn('⚠️ Files-based subject fallback failed:', fallbackError?.message || fallbackError);
@@ -106,7 +134,7 @@ module.exports = function createSubjectsRouter({ db, cache }) {
       } else {
         let subjectStatsItems = [];
         try {
-          let query = db.collection('subject_stats');
+          let query = db.collection('subject_stats').limit(40);
           if (yearFilter) query = query.where('year', '==', yearFilter);
           if (stateFilter) query = query.where('state', '==', stateFilter);
           if (specialtyFilter) query = query.where('specialty', '==', specialtyFilter);
@@ -134,8 +162,13 @@ module.exports = function createSubjectsRouter({ db, cache }) {
                 })
                 .filter(Boolean);
         } catch (statsError) {
-          console.warn('⚠️ subject_stats lookup failed, using files fallback instead:', statsError?.message || statsError);
-          subjectStatsItems = [];
+          if (isQuotaExhaustedError(statsError)) {
+            console.warn('⚠️ subject_stats quota exceeded, skipping Firestore stats and using lightweight fallback.');
+            subjectStatsItems = [];
+          } else {
+            console.warn('⚠️ subject_stats lookup failed, using files fallback instead:', statsError?.message || statsError);
+            subjectStatsItems = [];
+          }
         }
 
         const fallbackItems = await buildSubjectItemsFromFiles();
