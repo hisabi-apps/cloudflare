@@ -1,4 +1,5 @@
 const express = require('express');
+const admin = require('firebase-admin');
 const {
   normalizeText,
   normalizeStatsFilterValue,
@@ -6,7 +7,7 @@ const {
   matchesFileFilters,
 } = require('../../services/statsService');
 
-module.exports = function createFilesRouter({ db, cache }) {
+module.exports = function createFilesRouter({ db, cache, admin }) {
   const router = express.Router();
 
   router.get('/', async (req, res) => {
@@ -134,6 +135,48 @@ module.exports = function createFilesRouter({ db, cache }) {
     } catch (error) {
       console.error('Update metadata failed:', error);
       res.status(500).json({ error: 'Failed to update metadata.' });
+    }
+  });
+
+  router.post('/:id/like', async (req, res) => {
+    try {
+      if (!admin || !admin.auth || !admin.firestore) {
+        return res.status(500).json({ error: 'Firebase Admin is not configured.' });
+      }
+
+      const authHeader = req.headers.authorization || '';
+      if (!authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const idToken = authHeader.split(' ')[1];
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const currentUid = decodedToken?.uid;
+      if (!currentUid) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const { id } = req.params;
+      const docRef = db.collection('files').doc(id);
+      const doc = await docRef.get();
+      if (!doc.exists) {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+
+      await docRef.update({
+        likes: admin.firestore.FieldValue.increment(1),
+      });
+      if (cache && typeof cache.flushAll === 'function') {
+        cache.flushAll();
+      }
+
+      const updatedDoc = await docRef.get();
+      const updatedLikes = updatedDoc.data()?.likes ?? 0;
+
+      return res.json({ success: true, id, likes: updatedLikes, likedBy: currentUid });
+    } catch (error) {
+      console.error('Like update failed:', error);
+      return res.status(500).json({ error: 'Failed to update like count.' });
     }
   });
 

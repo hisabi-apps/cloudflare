@@ -121,7 +121,7 @@ const fileService = createFileService({
 
 app.use('/api/notifications', createNotificationsRouter({ admin, db }));
 app.use('/api/subjects', createSubjectsRouter({ db, cache }));
-app.use('/api/files', createFilesRouter({ db, cache }));
+app.use('/api/files', createFilesRouter({ db, cache, admin }));
 app.use('/api/pending', createPendingRouter({ db, cache }));
 app.use('/api/moderate', createModerateRouter({ db, admin, sendMulticastMessage, updateSubjectStatsTransaction, getLocalizedField, cache }));
 app.use('/api/admin/rebuild-stats', createAdminRebuildStatsRouter({ verifyAdminRequest, rebuildSubjectStatsFromApprovedFiles, cache }));

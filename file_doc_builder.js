@@ -37,6 +37,7 @@ function buildExerciseFileDocument({
     withCorrection: Boolean(withCorrection),
     uploadedByUid,
     uploadedByEmail,
+    likes: 0,
     fileHash,
     textFingerprint,
     createdAt,
