@@ -158,23 +158,47 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
 
       const { id } = req.params;
       const docRef = db.collection('files').doc(id);
-      const doc = await docRef.get();
-      if (!doc.exists) {
-        return res.status(404).json({ error: 'File not found.' });
-      }
 
-      await docRef.update({
-        likes: admin.firestore.FieldValue.increment(1),
+      const result = await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(docRef);
+        if (!snapshot.exists) {
+          throw new Error('FILE_NOT_FOUND');
+        }
+
+        const data = snapshot.data() || {};
+        const likedBy = Array.isArray(data.likedBy) ? data.likedBy : [];
+        const alreadyLiked = likedBy.includes(currentUid);
+        const nextLiked = !alreadyLiked;
+
+        transaction.update(docRef, {
+          likes: admin.firestore.FieldValue.increment(nextLiked ? 1 : -1),
+          likedBy: nextLiked
+            ? admin.firestore.FieldValue.arrayUnion(currentUid)
+            : admin.firestore.FieldValue.arrayRemove(currentUid),
+        });
+
+        const currentLikes = Number(data.likes) || 0;
+        const finalLikes = Math.max(currentLikes + (nextLiked ? 1 : -1), 0);
+
+        return {
+          success: true,
+          id,
+          likes: finalLikes,
+          liked: nextLiked,
+          likedBy: currentUid,
+        };
       });
+
       if (cache && typeof cache.flushAll === 'function') {
         cache.flushAll();
       }
 
-      const updatedDoc = await docRef.get();
-      const updatedLikes = updatedDoc.data()?.likes ?? 0;
-
-      return res.json({ success: true, id, likes: updatedLikes, likedBy: currentUid });
+      return res.json(result);
     } catch (error) {
+      if (error && error.message === 'FILE_NOT_FOUND') {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+
       console.error('Like update failed:', error);
       return res.status(500).json({ error: 'Failed to update like count.' });
     }
