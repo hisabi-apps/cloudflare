@@ -7,9 +7,19 @@ const isQuotaExhaustedError = (error) => {
 
 module.exports = function createPendingRouter({ db, cache }) {
   const router = express.Router();
+  const quotaBlockKey = 'pending_quota_block';
 
   router.get('/', async (req, res) => {
     try {
+      if (cache.get(quotaBlockKey)) {
+        return res.status(200).json({
+          files: [],
+          page: 1,
+          limit: 20,
+          hasMore: false,
+          debugType: 'quota_blocked',
+        });
+      }
       const pageNum = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
       const limitNum = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
       const requestedType = (req.query.type || '').toString().trim().toLowerCase();
@@ -101,7 +111,7 @@ module.exports = function createPendingRouter({ db, cache }) {
       res.json(response);
     } catch (error) {
       if (isQuotaExhaustedError(error)) {
-        console.warn('⚠️ Pending files quota exceeded, returning empty result.');
+        cache.set(quotaBlockKey, true, 60);
         return res.status(200).json({
           files: [],
           page: 1,
