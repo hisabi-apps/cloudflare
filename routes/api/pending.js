@@ -1,5 +1,10 @@
 const express = require('express');
 
+const isQuotaExhaustedError = (error) => {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('resource_exhausted') || message.includes('quota exceeded') || message.includes('quota');
+};
+
 module.exports = function createPendingRouter({ db, cache }) {
   const router = express.Router();
 
@@ -9,10 +14,6 @@ module.exports = function createPendingRouter({ db, cache }) {
       const limitNum = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
       const requestedType = (req.query.type || '').toString().trim().toLowerCase();
       const normalizedType = ['exercise', 'exam'].includes(requestedType) ? requestedType : null;
-      const isQuotaExhaustedError = (error) => {
-        const message = String(error?.message || error || '').toLowerCase();
-        return message.includes('resource_exhausted') || message.includes('quota exceeded') || message.includes('quota');
-      };
       const cacheKey = `pending_page_${pageNum}_${limitNum}_${normalizedType || 'all'}`;
       const cursorCacheKey = `pending_cursor_page_${pageNum}_${limitNum}_${normalizedType || 'all'}`;
       const prevCursorCacheKey = pageNum > 1 ? `pending_cursor_page_${pageNum - 1}_${limitNum}_${normalizedType || 'all'}` : null;

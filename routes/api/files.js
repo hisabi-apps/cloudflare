@@ -7,6 +7,11 @@ const {
   matchesFileFilters,
 } = require('../../services/statsService');
 
+const isQuotaExhaustedError = (error) => {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('resource_exhausted') || message.includes('quota exceeded') || message.includes('quota');
+};
+
 module.exports = function createFilesRouter({ db, cache, admin }) {
   const router = express.Router();
 
@@ -96,6 +101,16 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
         hasMore: offset + pagedFiles.length < files.length,
       });
     } catch (error) {
+      if (isQuotaExhaustedError(error)) {
+        console.warn('⚠️ Files listing quota exceeded, returning empty result.');
+        return res.status(200).json({
+          items: [],
+          page: 1,
+          limit: 10,
+          hasMore: false,
+        });
+      }
+
       console.error('Error fetching files:', error);
       res.status(500).json({ error: 'Failed to fetch files.', details: error.message || String(error) });
     }
