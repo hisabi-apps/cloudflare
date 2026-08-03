@@ -138,6 +138,81 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
     }
   });
 
+  router.post('/:id/comment', async (req, res) => {
+    try {
+      if (!admin || !admin.auth || !admin.firestore) {
+        return res.status(500).json({ error: 'Firebase Admin is not configured.' });
+      }
+
+      const authHeader = req.headers.authorization || '';
+      if (!authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const idToken = authHeader.split(' ')[1];
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const currentUid = decodedToken?.uid;
+      if (!currentUid) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const commentText = (req.body.comment || '').toString().trim();
+      if (!commentText) {
+        return res.status(400).json({ error: 'Comment text is required.' });
+      }
+
+      const { id } = req.params;
+      const docRef = db.collection('files').doc(id);
+
+      const result = await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(docRef);
+        if (!snapshot.exists) {
+          throw new Error('FILE_NOT_FOUND');
+        }
+
+        const data = snapshot.data() || {};
+        const existingComments = Array.isArray(data.comments) ? data.comments : [];
+        const newComment = {
+          id: `${Date.now()}-${currentUid.slice(0, 8)}`,
+          text: commentText,
+          userId: currentUid,
+          userName: decodedToken.name || decodedToken.email || 'مستخدم',
+          createdAt: new Date().toISOString(),
+        };
+
+        const comments = [...existingComments, newComment];
+
+        transaction.update(docRef, {
+          comment: commentText,
+          commentBy: currentUid,
+          commentAt: new Date().toISOString(),
+          comments,
+        });
+
+        return {
+          success: true,
+          id,
+          comment: commentText,
+          commentBy: currentUid,
+          comments,
+        };
+      });
+
+      if (cache && typeof cache.flushAll === 'function') {
+        cache.flushAll();
+      }
+
+      return res.json(result);
+    } catch (error) {
+      if (error && error.message === 'FILE_NOT_FOUND') {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+
+      console.error('Comment update failed:', error);
+      return res.status(500).json({ error: 'Failed to save comment.' });
+    }
+  });
+
   router.post('/:id/like', async (req, res) => {
     try {
       if (!admin || !admin.auth || !admin.firestore) {
