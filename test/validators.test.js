@@ -46,6 +46,7 @@ test('createDeviceTokenService exposes removeInvalidDeviceToken', async () => {
 test('containsExternalLink detects common URL patterns', () => {
   assert.equal(containsExternalLink('هذا تعليق مع https://example.com'), true);
   assert.equal(containsExternalLink('زيارة www.site.com الآن'), true);
+  assert.equal(containsExternalLink('تعليق مع exemple.com'), true);
   assert.equal(containsExternalLink('تعليق عادي بدون روابط'), false);
 });
 
@@ -53,4 +54,5 @@ test('sanitizeCommentText rejects comments that contain external links', () => {
   assert.equal(sanitizeCommentText('تعليق آمن'), 'تعليق آمن');
   assert.equal(sanitizeCommentText('https://malicious.example'), '');
   assert.equal(sanitizeCommentText('يرجى زيارة www.example.com'), '');
+  assert.equal(sanitizeCommentText('يرجى زيارة exemple.com'), '');
 });
