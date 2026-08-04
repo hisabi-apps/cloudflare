@@ -1,6 +1,6 @@
 const express = require('express');
 
-module.exports = function createAdminRebuildStatsRouter({ verifyAdminRequest, rebuildSubjectStatsFromApprovedFiles, cache }) {
+module.exports = function createAdminRebuildStatsRouter({ verifyAdminRequest, rebuildSubjectStatsFromApprovedFiles, rebuildSubjectsIndexFromSubjectStats, cache }) {
   const router = express.Router();
 
   router.post('/', async (req, res) => {
@@ -12,15 +12,17 @@ module.exports = function createAdminRebuildStatsRouter({ verifyAdminRequest, re
 
       console.log('🔧 Manual admin rebuild-stats requested by', adminRequest.uid);
 
-      const result = await rebuildSubjectStatsFromApprovedFiles({ batchSize: 500 });
+      const result = await rebuildSubjectStatsFromApprovedFiles({ batchSize: 500, deleteOldDocs: true });
+      const indexResult = await rebuildSubjectsIndexFromSubjectStats({ batchSize: 500 });
       cache.flushAll();
 
       return res.json({
         success: true,
         manual: true,
-        updated: result.statsDocs,
+        updated: result.processedFiles,
         processedFiles: result.processedFiles,
         pages: result.pages,
+        subjectsIndex: indexResult,
       });
     } catch (error) {
       console.error('Failed to rebuild subject_stats:', error);

@@ -18,16 +18,13 @@ module.exports = function createPendingRouter({ db, cache }) {
       }
 
       let query = db.collection('files')
-        .where('reviewStatus', '==', 'pending')
-        .orderBy('createdAt', 'desc')
-        .orderBy('__name__');
+        .where('reviewStatus', '==', 'pending');
 
       if (normalizedType) {
-        query = db.collection('files')
-          .where('reviewStatus', '==', 'pending')
-          .orderBy('createdAt', 'desc')
-          .orderBy('__name__');
+        query = query.where('type', '==', normalizedType);
       }
+
+      query = query.orderBy('createdAt', 'desc').orderBy('__name__');
 
       if (pageNum > 1 && prevCursorCacheKey) {
         const previousPageCursor = cache.get(prevCursorCacheKey);
@@ -92,7 +89,8 @@ module.exports = function createPendingRouter({ db, cache }) {
         debugType: normalizedType || 'all',
       };
 
-      cache.set(cacheKey, response);
+      res.set('Cache-Control', 'private, max-age=600, stale-while-revalidate=60');
+      cache.set(cacheKey, response, 600);
       res.json(response);
     } catch (error) {
       console.error('Error fetching pending files:', error);

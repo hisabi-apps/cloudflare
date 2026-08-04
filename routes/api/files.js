@@ -12,18 +12,30 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
 
   router.get('/', async (req, res) => {
     try {
-      const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, type, page = 1, limit = 10 } = req.query;
+      const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, type, page = 1, limit = 10, cursor } = req.query;
       if (!subject) {
         return res.status(400).json({ error: 'Subject is required.' });
       }
 
       const pageNum = Math.max(parseInt(page, 10) || 1, 1);
       const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
-      const offset = (pageNum - 1) * limitNum;
+      const cursorParts = cursor ? cursor.toString().split('|') : [];
+      const cursorCreatedAt = cursorParts.length === 2
+        ? admin.firestore.Timestamp.fromMillis(Number(cursorParts[0]))
+        : null;
+      const cursorDocId = cursorParts.length === 2 ? cursorParts[1] : null;
+      const queryLimit = Math.min(limitNum * 3, 50);
 
       const normalizedType = ['exercise', 'exam'].includes((type || 'exercise').toString().trim().toLowerCase())
         ? (type || 'exercise').toString().trim().toLowerCase()
         : 'exercise';
+
+      const normalizedSubject = normalizeText(subject);
+      const cacheKey = `files_${normalizedType}_${normalizedSubject}_${year || 'all'}_${state || 'all'}_${specialty || 'all'}_${fileYear || 'all'}_${fileYearFrom || 'all'}_${fileYearTo || 'all'}_${limitNum}_${cursor || 'first'}`;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
 
       const fileYearFilter = fileYear != null && fileYear !== '' && !Number.isNaN(Number(fileYear))
         ? Number(fileYear)
@@ -46,15 +58,23 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
         .orderBy('createdAt', 'desc')
         .orderBy('__name__');
 
-      let snapshot = await query.limit(200).get();
+      if (cursorCreatedAt != null && cursorDocId) {
+        query = query.startAfter(cursorCreatedAt, cursorDocId);
+      }
+
+      let snapshot = await query.limit(queryLimit).get();
       if (snapshot.empty) {
         let fallbackQuery = db.collection('files')
           .where('subject', '==', subject)
           .where('isApproved', '==', true)
           .orderBy('createdAt', 'desc')
-          .orderBy('__name__')
-          .limit(200);
-        snapshot = await fallbackQuery.get();
+          .orderBy('__name__');
+
+        if (cursorCreatedAt != null && cursorDocId) {
+          fallbackQuery = fallbackQuery.startAfter(cursorCreatedAt, cursorDocId);
+        }
+
+        snapshot = await fallbackQuery.limit(queryLimit).get();
         if (!snapshot.empty) {
           console.log(`📌 /api/files fallback to subject exact match for subject=${subject}`);
         }
@@ -87,14 +107,22 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
         files.push({ id: doc.id, ...data });
       });
 
-      const pagedFiles = files.slice(offset, offset + limitNum);
+      const pagedFiles = files.slice(0, limitNum);
+      const nextCursor = files.length >= limitNum && snapshot.docs[snapshot.docs.length - 1]
+        ? `${snapshot.docs[snapshot.docs.length - 1].data().createdAt.toMillis()}|${snapshot.docs[snapshot.docs.length - 1].id}`
+        : null;
 
-      res.json({
+      const response = {
         items: pagedFiles,
         page: pageNum,
         limit: limitNum,
-        hasMore: offset + pagedFiles.length < files.length,
-      });
+        hasMore: files.length === limitNum,
+        cursor: nextCursor,
+      };
+
+      cache.set(cacheKey, response, 600);
+      res.set('Cache-Control', 'private, max-age=600, stale-while-revalidate=60');
+      res.json(response);
     } catch (error) {
       console.error('Error fetching files:', error);
       res.status(500).json({ error: 'Failed to fetch files.', details: error.message || String(error) });

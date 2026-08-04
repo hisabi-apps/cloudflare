@@ -6,7 +6,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "rebuild-subjects-index": "node rebuild_subjects_index.js",
+    "rebuild-subject-stats-docs": "node rebuild_subject_stats_docs.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.370.0",

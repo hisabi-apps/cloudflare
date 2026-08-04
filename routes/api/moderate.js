@@ -44,6 +44,12 @@ module.exports = function createModerateRouter({ db, admin, sendMulticastMessage
           throw new Error('File not found.');
         }
 
+        const previousFileData = fileSnapshot.data() || {};
+        const previousReviewStatus = (previousFileData.reviewStatus || '').toString().trim().toLowerCase();
+        const wasApproved = previousFileData.isApproved === true;
+        const willBeApproved = approved === true;
+        const willBeRejected = approved === false;
+
         transaction.update(docRef, {
           isApproved: approved,
           reviewStatus: approved ? 'approved' : 'rejected',
@@ -60,13 +66,27 @@ module.exports = function createModerateRouter({ db, admin, sendMulticastMessage
             lastModerationUpdate: admin.firestore.FieldValue.serverTimestamp(),
           };
 
-          if (approved) {
+          if (willBeApproved && !wasApproved) {
             moderationUpdate.approvedFiles = admin.firestore.FieldValue.increment(1);
-            moderationUpdate.totalUploads = admin.firestore.FieldValue.increment(1);
-            moderationUpdate.pendingFiles = admin.firestore.FieldValue.increment(-1);
-            moderationUpdate.rejectedFiles = admin.firestore.FieldValue.increment(0);
-          } else {
+            if (previousReviewStatus === 'pending') {
+              moderationUpdate.pendingFiles = admin.firestore.FieldValue.increment(-1);
+            } else if (previousReviewStatus === 'rejected') {
+              moderationUpdate.rejectedFiles = admin.firestore.FieldValue.increment(-1);
+            }
+          }
+
+          if (willBeRejected && wasApproved) {
+            moderationUpdate.approvedFiles = admin.firestore.FieldValue.increment(-1);
             moderationUpdate.rejectedFiles = admin.firestore.FieldValue.increment(1);
+          }
+
+          if (willBeRejected && previousReviewStatus === 'pending') {
+            moderationUpdate.rejectedFiles = admin.firestore.FieldValue.increment(1);
+            moderationUpdate.pendingFiles = admin.firestore.FieldValue.increment(-1);
+          }
+
+          if (willBeApproved && previousReviewStatus === 'pending') {
+            moderationUpdate.approvedFiles = admin.firestore.FieldValue.increment(1);
             moderationUpdate.pendingFiles = admin.firestore.FieldValue.increment(-1);
           }
 
@@ -91,8 +111,14 @@ module.exports = function createModerateRouter({ db, admin, sendMulticastMessage
             );
           }
 
-          if (approved) {
-            await updateSubjectStatsTransaction(fileSnapshot.data() || fileData, 1, transaction);
+          const subjectStatsDelta = willBeApproved && !wasApproved
+            ? 1
+            : willBeRejected && wasApproved
+              ? -1
+              : 0;
+
+          if (subjectStatsDelta !== 0) {
+            await updateSubjectStatsTransaction(previousFileData, subjectStatsDelta, transaction);
           }
         }
       });

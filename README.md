@@ -16,11 +16,16 @@ R2_BUCKET_NAME=your-bucket-name
 R2_PUBLIC_BASE_URL=https://files.example.com
 R2_UPLOAD_PREFIX=exercises
 PORT=3000
+# Optional hybrid stats sharding settings
+USE_STATS_SHARDS=true
+STATS_SHARD_COUNT=10
 ```
 
 - `R2_PUBLIC_BASE_URL` is optional.
 - If omitted, the backend will use Cloudflare R2 default URL:
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`.
+- `USE_STATS_SHARDS` enables optional Firestore sharded counters for `subject_stats`.
+- `STATS_SHARD_COUNT` controls how many shard buckets to use when sharding is enabled.
 
 ## Install dependencies
 

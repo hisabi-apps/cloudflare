@@ -98,9 +98,22 @@ const {
   verifyAdminRequest,
 } = firebaseAdminService;
 
-const subjectStatsService = createSubjectStatsService({ admin, db, cache, uploadPrefix: R2_UPLOAD_PREFIX });
+const USE_STATS_SHARDS = process.env.USE_STATS_SHARDS === 'true';
+const STATS_SHARD_COUNT = Number.isInteger(Number(process.env.STATS_SHARD_COUNT))
+  ? Number(process.env.STATS_SHARD_COUNT)
+  : 10;
+
+const subjectStatsService = createSubjectStatsService({
+  admin,
+  db,
+  cache,
+  uploadPrefix: R2_UPLOAD_PREFIX,
+  useStatsShards: USE_STATS_SHARDS,
+  statsShardCount: STATS_SHARD_COUNT,
+});
 const {
   rebuildSubjectStatsFromApprovedFiles,
+  rebuildSubjectsIndexFromSubjectStats,
   updateSubjectStats,
   updateSubjectStatsTransaction,
   sanitizeSegment,
@@ -124,7 +137,7 @@ app.use('/api/subjects', createSubjectsRouter({ db, cache }));
 app.use('/api/files', createFilesRouter({ db, cache, admin }));
 app.use('/api/pending', createPendingRouter({ db, cache }));
 app.use('/api/moderate', createModerateRouter({ db, admin, sendMulticastMessage, updateSubjectStatsTransaction, getLocalizedField, cache }));
-app.use('/api/admin/rebuild-stats', createAdminRebuildStatsRouter({ verifyAdminRequest, rebuildSubjectStatsFromApprovedFiles, cache }));
+app.use('/api/admin/rebuild-stats', createAdminRebuildStatsRouter({ verifyAdminRequest, rebuildSubjectStatsFromApprovedFiles, rebuildSubjectsIndexFromSubjectStats, cache }));
 app.use('/api/admin/send-fcm-notification', createAdminSendFcmRouter({
   admin,
   db,
