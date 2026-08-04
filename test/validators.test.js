@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeDeviceTokens, createDeviceTokenService } = require('../utils/validators');
+const { normalizeDeviceTokens, createDeviceTokenService, containsExternalLink, sanitizeCommentText } = require('../utils/validators');
 
 test('normalizeDeviceTokens deduplicates and collects fallback tokens', () => {
   const userData = {
@@ -41,4 +41,16 @@ test('createDeviceTokenService exposes removeInvalidDeviceToken', async () => {
   const service = createDeviceTokenService({ admin, db });
   await service.removeInvalidDeviceToken('user-1', 'token-x');
   assert.deepEqual(removed, [{ deviceTokens: { op: 'remove', token: 'token-x' } }]);
+});
+
+test('containsExternalLink detects common URL patterns', () => {
+  assert.equal(containsExternalLink('هذا تعليق مع https://example.com'), true);
+  assert.equal(containsExternalLink('زيارة www.site.com الآن'), true);
+  assert.equal(containsExternalLink('تعليق عادي بدون روابط'), false);
+});
+
+test('sanitizeCommentText rejects comments that contain external links', () => {
+  assert.equal(sanitizeCommentText('تعليق آمن'), 'تعليق آمن');
+  assert.equal(sanitizeCommentText('https://malicious.example'), '');
+  assert.equal(sanitizeCommentText('يرجى زيارة www.example.com'), '');
 });
