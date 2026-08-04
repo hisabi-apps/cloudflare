@@ -316,5 +316,72 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
     }
   });
 
+  router.delete('/:id/comments/:commentId', async (req, res) => {
+    try {
+      if (!admin || !admin.auth || !admin.firestore) {
+        return res.status(500).json({ error: 'Firebase Admin is not configured.' });
+      }
+
+      const authHeader = req.headers.authorization || '';
+      if (!authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const idToken = authHeader.split(' ')[1];
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const currentUid = decodedToken?.uid;
+      if (!currentUid) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const { id, commentId } = req.params;
+      const docRef = db.collection('files').doc(id);
+      const commentRef = docRef.collection('comments').doc(commentId);
+
+      await db.runTransaction(async (transaction) => {
+        const [fileSnapshot, commentSnapshot] = await Promise.all([
+          transaction.get(docRef),
+          transaction.get(commentRef),
+        ]);
+
+        if (!fileSnapshot.exists) {
+          throw new Error('FILE_NOT_FOUND');
+        }
+        if (!commentSnapshot.exists) {
+          throw new Error('COMMENT_NOT_FOUND');
+        }
+
+        const commentData = commentSnapshot.data() || {};
+        if (commentData.createdByUid !== currentUid) {
+          throw new Error('FORBIDDEN');
+        }
+
+        transaction.delete(commentRef);
+        transaction.update(docRef, {
+          commentsCount: admin.firestore.FieldValue.increment(-1),
+        });
+      });
+
+      if (cache && typeof cache.flushAll === 'function') {
+        cache.flushAll();
+      }
+
+      return res.json({ success: true, id: commentId });
+    } catch (error) {
+      if (error && error.message === 'FILE_NOT_FOUND') {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+      if (error && error.message === 'COMMENT_NOT_FOUND') {
+        return res.status(404).json({ error: 'Comment not found.' });
+      }
+      if (error && error.message === 'FORBIDDEN') {
+        return res.status(403).json({ error: 'You are not allowed to delete this comment.' });
+      }
+
+      console.error('Delete comment failed:', error);
+      return res.status(500).json({ error: 'Failed to delete comment.' });
+    }
+  });
+
   return router;
 };
