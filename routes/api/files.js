@@ -47,7 +47,6 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
         ? Number(fileYearTo)
         : null;
 
-      const normalizedSubject = normalizeText(subject);
       const yearFilter = year ? normalizeStatsFilterValue(year) : null;
       const stateFilter = state ? normalizeStateValue(state) : null;
       const specialtyFilter = specialty ? normalizeStatsFilterValue(specialty) : null;
