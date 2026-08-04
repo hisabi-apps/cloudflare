@@ -1,25 +1,10 @@
 const express = require('express');
 
-const isQuotaExhaustedError = (error) => {
-  const message = String(error?.message || error || '').toLowerCase();
-  return message.includes('resource_exhausted') || message.includes('quota exceeded') || message.includes('quota');
-};
-
 module.exports = function createPendingRouter({ db, cache }) {
   const router = express.Router();
-  const quotaBlockKey = 'pending_quota_block';
 
   router.get('/', async (req, res) => {
     try {
-      if (cache.get(quotaBlockKey)) {
-        return res.status(200).json({
-          files: [],
-          page: 1,
-          limit: 20,
-          hasMore: false,
-          debugType: 'quota_blocked',
-        });
-      }
       const pageNum = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
       const limitNum = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
       const requestedType = (req.query.type || '').toString().trim().toLowerCase();
@@ -110,17 +95,6 @@ module.exports = function createPendingRouter({ db, cache }) {
       cache.set(cacheKey, response);
       res.json(response);
     } catch (error) {
-      if (isQuotaExhaustedError(error)) {
-        cache.set(quotaBlockKey, true, 60);
-        return res.status(200).json({
-          files: [],
-          page: 1,
-          limit: 20,
-          hasMore: false,
-          debugType: 'quota_fallback',
-        });
-      }
-
       console.error('Error fetching pending files:', error);
       res.status(500).json({ error: 'Failed to fetch pending files.', details: error.message });
     }
