@@ -316,6 +316,63 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
     }
   });
 
+  router.patch('/:id/comments/:commentId', async (req, res) => {
+    try {
+      if (!admin || !admin.auth || !admin.firestore) {
+        return res.status(500).json({ error: 'Firebase Admin is not configured.' });
+      }
+
+      const authHeader = req.headers.authorization || '';
+      if (!authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const idToken = authHeader.split(' ')[1];
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const currentUid = decodedToken?.uid;
+      if (!currentUid) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const { id, commentId } = req.params;
+      const { text } = req.body || {};
+      const commentText = sanitizeCommentText(typeof text === 'string' ? text : '');
+      if (!commentText) {
+        return res.status(400).json({ error: 'Comment text is required and cannot contain external links.' });
+      }
+
+      const docRef = db.collection('files').doc(id);
+      const commentRef = docRef.collection('comments').doc(commentId);
+      const [fileDoc, commentDoc] = await Promise.all([docRef.get(), commentRef.get()]);
+
+      if (!fileDoc.exists) {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+      if (!commentDoc.exists) {
+        return res.status(404).json({ error: 'Comment not found.' });
+      }
+
+      const commentData = commentDoc.data() || {};
+      if (commentData.createdByUid !== currentUid) {
+        return res.status(403).json({ error: 'You are not allowed to edit this comment.' });
+      }
+
+      await commentRef.update({
+        text: commentText,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      if (cache && typeof cache.flushAll === 'function') {
+        cache.flushAll();
+      }
+
+      return res.json({ success: true, id: commentId, text: commentText });
+    } catch (error) {
+      console.error('Edit comment failed:', error);
+      return res.status(500).json({ error: 'Failed to edit comment.' });
+    }
+  });
+
   router.delete('/:id/comments/:commentId', async (req, res) => {
     try {
       if (!admin || !admin.auth || !admin.firestore) {
