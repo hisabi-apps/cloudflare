@@ -6,6 +6,7 @@ const {
   normalizeStateValue,
   matchesFileFilters,
 } = require('../../services/statsService');
+const { sanitizeCommentText } = require('../../utils/validators');
 
 module.exports = function createFilesRouter({ db, cache, admin }) {
   const router = express.Router();
@@ -285,9 +286,9 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
 
       const { id } = req.params;
       const { text } = req.body || {};
-      const commentText = typeof text === 'string' ? text.trim() : '';
+      const commentText = sanitizeCommentText(typeof text === 'string' ? text : '');
       if (!commentText) {
-        return res.status(400).json({ error: 'Comment text is required.' });
+        return res.status(400).json({ error: 'Comment text is required and cannot contain external links.' });
       }
 
       const docRef = db.collection('files').doc(id);
