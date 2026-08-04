@@ -7,25 +7,11 @@ const {
   matchesFileFilters,
 } = require('../../services/statsService');
 
-const isQuotaExhaustedError = (error) => {
-  const message = String(error?.message || error || '').toLowerCase();
-  return message.includes('resource_exhausted') || message.includes('quota exceeded') || message.includes('quota');
-};
-
 module.exports = function createFilesRouter({ db, cache, admin }) {
   const router = express.Router();
-  const quotaBlockKey = 'files_route_quota_block';
 
   router.get('/', async (req, res) => {
     try {
-      if (cache.get(quotaBlockKey)) {
-        return res.status(200).json({
-          items: [],
-          page: 1,
-          limit: 10,
-          hasMore: false,
-        });
-      }
       const { subject, year, state, specialty, fileYear, fileYearFrom, fileYearTo, type, page = 1, limit = 10 } = req.query;
       if (!subject) {
         return res.status(400).json({ error: 'Subject is required.' });
@@ -110,16 +96,6 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
         hasMore: offset + pagedFiles.length < files.length,
       });
     } catch (error) {
-      if (isQuotaExhaustedError(error)) {
-        cache.set(quotaBlockKey, true, 60);
-        return res.status(200).json({
-          items: [],
-          page: 1,
-          limit: 10,
-          hasMore: false,
-        });
-      }
-
       console.error('Error fetching files:', error);
       res.status(500).json({ error: 'Failed to fetch files.', details: error.message || String(error) });
     }
@@ -127,9 +103,6 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
 
   router.patch('/:id', async (req, res) => {
     try {
-      if (cache.get(quotaBlockKey)) {
-        return res.status(200).json({ success: false, quotaBlocked: true, id: req.params.id });
-      }
       const { id } = req.params;
       const { title, subject, year, state, specialty, fileYear } = req.body;
 
@@ -160,97 +133,13 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
 
       res.json({ success: true, id });
     } catch (error) {
-      if (isQuotaExhaustedError(error)) {
-        cache.set(quotaBlockKey, true, 60);
-        return res.status(200).json({ success: false, quotaBlocked: true, id: req.params.id });
-      }
       console.error('Update metadata failed:', error);
       res.status(500).json({ error: 'Failed to update metadata.' });
     }
   });
 
-  router.post('/:id/comment', async (req, res) => {
-    try {
-      if (cache.get(quotaBlockKey)) {
-        return res.status(200).json({ success: false, quotaBlocked: true, id: req.params.id });
-      }
-      if (!admin || !admin.auth || !admin.firestore) {
-        return res.status(500).json({ error: 'Firebase Admin is not configured.' });
-      }
-
-      const authHeader = req.headers.authorization || '';
-      if (!authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Unauthorized request.' });
-      }
-
-      const idToken = authHeader.split(' ')[1];
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      const currentUid = decodedToken?.uid;
-      const displayName = decodedToken?.name || decodedToken?.email || 'مستخدم';
-      if (!currentUid) {
-        return res.status(401).json({ error: 'Unauthorized request.' });
-      }
-
-      const { id } = req.params;
-      const { text } = req.body || {};
-      const commentText = typeof text === 'string' ? text.trim() : '';
-      if (!commentText) {
-        return res.status(400).json({ error: 'Comment text is required.' });
-      }
-
-      const docRef = db.collection('files').doc(id);
-      const result = await db.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(docRef);
-        if (!snapshot.exists) {
-          throw new Error('FILE_NOT_FOUND');
-        }
-
-        const data = snapshot.data() || {};
-        const existingComments = Array.isArray(data.comments) ? data.comments : [];
-        const nextComment = {
-          id: `${Date.now()}_${currentUid.slice(0, 8)}`,
-          text: commentText,
-          uid: currentUid,
-          userName: displayName,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
-
-        transaction.update(docRef, {
-          comments: [...existingComments, nextComment],
-        });
-
-        return {
-          success: true,
-          id,
-          commentCount: existingComments.length + 1,
-          comments: [...existingComments, nextComment],
-        };
-      });
-
-      if (cache && typeof cache.flushAll === 'function') {
-        cache.flushAll();
-      }
-
-      return res.json(result);
-    } catch (error) {
-      if (isQuotaExhaustedError(error)) {
-        cache.set(quotaBlockKey, true, 60);
-        return res.status(200).json({ success: false, quotaBlocked: true, id: req.params.id });
-      }
-      if (error && error.message === 'FILE_NOT_FOUND') {
-        return res.status(404).json({ error: 'File not found.' });
-      }
-
-      console.error('Comment update failed:', error);
-      return res.status(500).json({ error: 'Failed to save comment.' });
-    }
-  });
-
   router.post('/:id/like', async (req, res) => {
     try {
-      if (cache.get(quotaBlockKey)) {
-        return res.status(200).json({ success: false, quotaBlocked: true, id: req.params.id });
-      }
       if (!admin || !admin.auth || !admin.firestore) {
         return res.status(500).json({ error: 'Firebase Admin is not configured.' });
       }
@@ -306,10 +195,6 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
 
       return res.json(result);
     } catch (error) {
-      if (isQuotaExhaustedError(error)) {
-        cache.set(quotaBlockKey, true, 60);
-        return res.status(200).json({ success: false, quotaBlocked: true, id: req.params.id });
-      }
       if (error && error.message === 'FILE_NOT_FOUND') {
         return res.status(404).json({ error: 'File not found.' });
       }
