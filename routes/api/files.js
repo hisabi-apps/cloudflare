@@ -231,5 +231,89 @@ module.exports = function createFilesRouter({ db, cache, admin }) {
     }
   });
 
+  router.get('/:id/comments', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+      const docRef = db.collection('files').doc(id);
+      const doc = await docRef.get();
+      if (!doc.exists) {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+
+      const snapshot = await docRef
+        .collection('comments')
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get();
+
+      const items = snapshot.docs.map((commentDoc) => {
+        const data = commentDoc.data() || {};
+        return {
+          id: commentDoc.id,
+          ...data,
+          createdAt: data.createdAt && data.createdAt.toMillis
+            ? data.createdAt.toMillis()
+            : null,
+        };
+      });
+
+      res.json({ items, count: items.length });
+    } catch (error) {
+      console.error('Fetch comments failed:', error);
+      res.status(500).json({ error: 'Failed to fetch comments.' });
+    }
+  });
+
+  router.post('/:id/comments', async (req, res) => {
+    try {
+      if (!admin || !admin.auth || !admin.firestore) {
+        return res.status(500).json({ error: 'Firebase Admin is not configured.' });
+      }
+
+      const authHeader = req.headers.authorization || '';
+      if (!authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const idToken = authHeader.split(' ')[1];
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const currentUid = decodedToken?.uid;
+      if (!currentUid) {
+        return res.status(401).json({ error: 'Unauthorized request.' });
+      }
+
+      const { id } = req.params;
+      const { text } = req.body || {};
+      const commentText = typeof text === 'string' ? text.trim() : '';
+      if (!commentText) {
+        return res.status(400).json({ error: 'Comment text is required.' });
+      }
+
+      const docRef = db.collection('files').doc(id);
+      const fileDoc = await docRef.get();
+      if (!fileDoc.exists) {
+        return res.status(404).json({ error: 'File not found.' });
+      }
+
+      const commentsRef = docRef.collection('comments').doc();
+      const commentData = {
+        text: commentText,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdByUid: currentUid,
+        createdByDisplayName: decodedToken.name || 'مستخدم',
+        createdByPhotoUrl: decodedToken.picture || '',
+      };
+
+      await commentsRef.set(commentData);
+      await docRef.set({ commentsCount: admin.firestore.FieldValue.increment(1) }, { merge: true });
+
+      return res.json({ success: true, id: commentsRef.id, ...commentData });
+    } catch (error) {
+      console.error('Add comment failed:', error);
+      return res.status(500).json({ error: 'Failed to add comment.' });
+    }
+  });
+
   return router;
 };
