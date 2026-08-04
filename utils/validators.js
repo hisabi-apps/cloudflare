@@ -69,6 +69,7 @@ function containsExternalLink(value) {
   }
 
   const urlPattern = /(?:https?:\/\/|www\.)\S+/i;
+  const bareDomainPattern = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:\b|\/)/i;
   const mailtoPattern = /mailto:\S+/i;
   const telegramPattern = /t\.me\/\S+/i;
   const instagramPattern = /instagram\.com\/\S+/i;
@@ -76,7 +77,7 @@ function containsExternalLink(value) {
   const snapchatPattern = /snapchat\.com\/\S+/i;
   const discordPattern = /discord(?:\.gg|\.com)\/\S+/i;
 
-  return [urlPattern, mailtoPattern, telegramPattern, instagramPattern, whatsappPattern, snapchatPattern, discordPattern].some((pattern) => pattern.test(normalized));
+  return [urlPattern, bareDomainPattern, mailtoPattern, telegramPattern, instagramPattern, whatsappPattern, snapchatPattern, discordPattern].some((pattern) => pattern.test(normalized));
 }
 
 function sanitizeCommentText(value) {
