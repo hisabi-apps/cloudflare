@@ -119,9 +119,14 @@ module.exports = function createSubjectsRouter({ db, cache }) {
         }
       };
 
-      if (!hasActiveFilters && subjectsIndexItems.length > 0) {
+      const useSubjectsIndex = !hasActiveFilters && subjectsIndexItems.length > 0 && subjectsIndexItems.some((item) => item.count > 0);
+      if (useSubjectsIndex) {
         items = subjectsIndexItems;
       } else {
+        if (!hasActiveFilters && subjectsIndexItems.length > 0) {
+          console.warn('⚠️ subjects_index appears stale or empty; falling back to subject_stats/files aggregation');
+        }
+
         let subjectStatsItems = [];
         try {
           const snapshot = await db.collection('subject_stats')
