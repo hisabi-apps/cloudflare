@@ -58,6 +58,44 @@ function normalizeDeviceTokens(userData) {
   return [...new Set(tokens)];
 }
 
+function containsExternalLink(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const urlPattern = /(?:https?:\/\/|www\.)\S+/i;
+  const mailtoPattern = /mailto:\S+/i;
+  const telegramPattern = /t\.me\/\S+/i;
+  const instagramPattern = /instagram\.com\/\S+/i;
+  const whatsappPattern = /wa\.me\/\S+/i;
+  const snapchatPattern = /snapchat\.com\/\S+/i;
+  const discordPattern = /discord(?:\.gg|\.com)\/\S+/i;
+
+  return [urlPattern, mailtoPattern, telegramPattern, instagramPattern, whatsappPattern, snapchatPattern, discordPattern].some((pattern) => pattern.test(normalized));
+}
+
+function sanitizeCommentText(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (containsExternalLink(trimmed)) {
+    return '';
+  }
+
+  return trimmed;
+}
+
 function createDeviceTokenService({ admin, db }) {
   async function removeInvalidDeviceToken(userId, token) {
     try {
@@ -81,4 +119,6 @@ module.exports = {
   normalizeDeviceTokens,
   createDeviceTokenService,
   resolveNotificationMetadata,
+  containsExternalLink,
+  sanitizeCommentText,
 };
